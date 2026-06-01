@@ -33,7 +33,12 @@ def _try_marketlake(symbol: str, interval: str, start: date, end: date) -> pd.Da
 
 
 def _yfinance_fallback(symbol: str, interval: str, start: date, end: date) -> pd.DataFrame:
-    """Yahoo Finance fallback. Maps our intervals to yfinance's vocabulary."""
+    """Yahoo Finance fallback. Maps our intervals to yfinance's vocabulary.
+
+    yfinance's return shape has drifted over versions: it can return a MultiIndex
+    on columns even for a single ticker, and the index name varies between 'Date',
+    'Datetime', and None. We normalise defensively to our canonical schema.
+    """
     import yfinance as yf
 
     interval_map = {"1d": "1d", "1h": "60m", "5m": "5m", "15m": "15m"}
@@ -48,19 +53,39 @@ def _yfinance_fallback(symbol: str, interval: str, start: date, end: date) -> pd
         auto_adjust=True,
     )
     if df.empty:
-        raise ValueError(f"No data for {symbol} {interval} {start}..{end}")
+        raise ValueError(
+            f"No data for {symbol} {interval} {start}..{end}. "
+            f"Yahoo may be rate-limiting; try again in a minute or use a different symbol."
+        )
 
-    # yfinance returns MultiIndex columns when multiple tickers; flatten to single ticker case.
+    # Flatten MultiIndex columns (yfinance returns this even for single-ticker pulls).
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    df = df.rename(columns=str.lower).reset_index()
-    df = df.rename(columns={"date": "ts", "datetime": "ts"})
+    # Lowercase column names. Cast each label to str first so tuples / non-strings don't crash.
+    df.columns = [str(c).lower() for c in df.columns]
+
+    # Bring the date/datetime index out as a column. The index name varies
+    # ('Date' for daily, 'Datetime' for intraday, None in some yfinance versions).
+    index_name = df.index.name
+    df = df.reset_index()
+    if index_name is None:
+        # Whatever the new column is called after reset_index, the first column IS the timestamp.
+        df = df.rename(columns={df.columns[0]: "ts"})
+    else:
+        df = df.rename(columns={index_name.lower(): "ts", index_name: "ts"})
+
+    # Add metadata columns.
     df["symbol"] = symbol
     df["interval"] = interval
 
     keep = ["symbol", "interval", "ts", "open", "high", "low", "close", "volume"]
-    df = df[[c for c in keep if c in df.columns]].copy()
+    available = [c for c in keep if c in df.columns]
+    if "ts" not in available:
+        raise ValueError(
+            f"yfinance returned an unexpected schema for {symbol}: columns={df.columns.tolist()}"
+        )
+    df = df[available].copy()
     df["ts"] = pd.to_datetime(df["ts"])
     return df
 
