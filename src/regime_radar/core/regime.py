@@ -196,17 +196,34 @@ def detect_regime(
     hmm_label = hmm.current_label
     hmm_conf = hmm.current_confidence
 
+    # Cap raw HMM confidence at 0.85. Posteriors of 1.00 are an artefact of Gaussian
+    # emission likelihoods, not real epistemic certainty — leaving a doubt floor of
+    # 0.15 prevents one over-confident voter from drowning out the other two.
+    hmm_conf = min(hmm_conf, 0.85)
+
     # HMM tends to overconfidently call directional labels in low-info regimes.
-    # When the rule classifier finds strong mean-reversion evidence (it has the right
-    # gating: drift, vol, VR, half-life), dampen HMM's directional confidence.
+    # Dampening ladder (most severe first):
     is_directional = hmm_label in (
         RegimeLabel.TRENDING_UP,
         RegimeLabel.TRENDING_DOWN,
         RegimeLabel.BREAKOUT,
     )
     rule_says_reverting = rule.label == RegimeLabel.MEAN_REVERTING
-    if is_directional and rule_says_reverting and rule.half_life_days < 15.0:
-        hmm_conf *= 0.3  # strong price-level reversion evidence — strongest dampening
+
+    # CRITICAL: HMM points directionally but BOTH other voters disagree on direction.
+    # Two-against-one across orthogonal methods is the strongest possible refutation.
+    edmd_disagrees_directionally = (
+        edmd_label in (RegimeLabel.TRENDING_UP, RegimeLabel.TRENDING_DOWN, RegimeLabel.BREAKOUT)
+        and edmd_label != hmm_label
+    )
+    rule_disagrees_directionally = (
+        rule.label in (RegimeLabel.TRENDING_UP, RegimeLabel.TRENDING_DOWN, RegimeLabel.BREAKOUT)
+        and rule.label != hmm_label
+    )
+    if is_directional and edmd_disagrees_directionally and rule_disagrees_directionally:
+        hmm_conf *= 0.25  # two-against-one — HMM is almost certainly wrong
+    elif is_directional and rule_says_reverting and rule.half_life_days < 15.0:
+        hmm_conf *= 0.3  # strong price-level reversion evidence
     elif is_directional and rule_says_reverting and rule.variance_ratio_5 < 0.70:
         hmm_conf *= 0.4  # strong return-space reversion evidence
     elif is_directional and abs(rule.trend_strength) < 0.05:
