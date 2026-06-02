@@ -11,7 +11,7 @@ RegimeRadar classifies the current state of a market — *trending up/down, mean
 ## Quickstart
 
 ```bash
-git clone https://github.com/<your-username>/regime_radar.git
+git clone https://github.com/KosmicByte/regime_radar.git
 cd regime_radar
 uv sync
 uv run regime detect --symbol ^NSEI
