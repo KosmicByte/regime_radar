@@ -6,6 +6,21 @@
 2. **Independent voters** — ensemble three methods whose statistical assumptions are orthogonal, so their errors are uncorrelated and aggregate accuracy beats any single method.
 3. **Pure math core** — the `core/` package has no I/O, no globals, no side effects. Inject a numpy array, get back a Pydantic result. This makes the math fully testable on synthetic data with known ground truth.
 4. **Honest measurement** — ship the evaluation harness so accuracy claims are reproducible. The 70% headline is enforced as a regression test, not a marketing number.
+5. **Point-in-time by construction** — detection cannot see the future and every result is reproducible. This is structural, not a convention to remember (see below).
+
+## Point-in-time contract & reproducibility (R0)
+
+Every detection consumes a `PointInTimeFrame` (`core/contract.py`). The frame wraps a price series plus an `as_of` instant and **truncates to that instant at construction** — there is no method that returns a bar dated after `as_of`. `detect_regime` accepts a frame directly, or builds one internally from a raw `close` array, so both call paths get the same guarantee. The walk-forward harness wraps each window in a frame whose `as_of` is the window's last bar, turning "no look-ahead" from a hope into an enforced invariant: appending future bars to a series leaves a past-dated decision byte-identical (this is a test, `test_future_bars_do_not_leak`).
+
+Reproducibility rides on three fields stamped onto every `RegimeResult`:
+
+- `model_version` — the detection-logic semver from `version.py` (`MODEL_VERSION`), bumped on any change that can alter outputs. Distinct from the package version.
+- `code_version` — git SHA (with a `+dirty` marker) or, failing that, the package version.
+- `input_hash` — a stable 16-char SHA-256 of the visible inputs; identical inputs always produce an identical hash.
+
+When `provenance_enabled` is set, each detection also appends an immutable `InferenceRecord` (one JSON line) under `provenance_dir`. Records are stdlib-only and append-only, and writing is wrapped so provenance can never break a detection.
+
+The contract reserves a `with_exogenous` hook (currently a documented `NotImplementedError`) for macro / cross-asset features that will carry their own `known_at` publication lag — so those features can be added later without a breaking change.
 
 ## Dependency graph
 
@@ -15,6 +30,8 @@
             └──────┬───────┘
                    │
               data.py (single market-data entry point)
+                   │
+            core/contract.py (point-in-time frame — truncates to as_of)
                    │
         ┌──────────┼──────────┐
         ▼          ▼          ▼
@@ -26,13 +43,14 @@
        └──────────┬──────────┘
                   │
             models.py (Pydantic v2)
+            version.py · provenance.py (R0: versioning + inference log)
                   │
         ┌─────────┼─────────┐
         ▼         ▼         ▼
        cli/      eval/    viz/
 ```
 
-`core/` has zero external coupling beyond numpy/scipy/hmmlearn. `cli/`, `eval/`, and `viz/` all depend on `core/` and `models.py` but never on each other.
+`core/` has zero external coupling beyond numpy/scipy/hmmlearn (the R0 additions use only stdlib `hashlib`/`json`). `cli/`, `eval/`, and `viz/` all depend on `core/` and `models.py` but never on each other.
 
 ## The ensemble
 

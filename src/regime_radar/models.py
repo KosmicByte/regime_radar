@@ -77,6 +77,22 @@ class RegimeResult(BaseModel):
     realized_vol: float = Field(description="Annualised σ over the analysis window.")
     trend_strength: float = Field(description="Standardised drift, [-1, 1] approximately.")
 
+    # --- Provenance & reproducibility (R0) ---------------------------------------------
+    # Populated by detect_regime so any past result can be reproduced and audited. Default
+    # to empty strings to keep older construction sites and deserialisation working.
+    model_version: str = Field(
+        default="",
+        description="Detection-logic version (version.MODEL_VERSION) that produced this result.",
+    )
+    code_version: str = Field(
+        default="",
+        description="Running-code identifier — git SHA (with +dirty marker) or package version.",
+    )
+    input_hash: str = Field(
+        default="",
+        description="Stable SHA-256 (truncated) of the point-in-time inputs; identical inputs → identical hash.",
+    )
+
 
 class TransitionRisk(BaseModel):
     """A scalar 0..1 risk that the current regime is about to change."""

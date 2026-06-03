@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from regime_radar.core.contract import PointInTimeFrame
 from regime_radar.core.regime import detect_regime
 from regime_radar.eval.synthetic import SyntheticSeries
 from regime_radar.models import RegimeLabel
@@ -91,11 +92,16 @@ def walk_forward(
     for end in range(window, n_total + 1, step):
         start = end - window
         window_close = prices[start : end + 1]  # +1 because prices is one longer
+        # Wrap each window in a point-in-time frame whose as_of is the window's last bar.
+        # This turns the no-look-ahead guarantee into something the evaluation enforces:
+        # detection physically cannot see any bar beyond `end`.
+        frame = PointInTimeFrame.from_arrays(
+            window_close, symbol="synthetic", interval="1d"
+        )
+        assert frame.n == len(window_close), "PIT frame dropped bars within the window"
         try:
             result = detect_regime(
-                close=window_close,
-                symbol="synthetic",
-                interval="1d",
+                frame=frame,
                 edmd_rank=min(edmd_rank, window // 3),
                 hmm_n_states=hmm_n_states,
             )

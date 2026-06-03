@@ -11,16 +11,18 @@ weighted probability distribution, and `reasons` is populated so the user can au
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import numpy as np
 import pandas as pd
 
+from regime_radar.config import get_settings
+from regime_radar.core.contract import PointInTimeFrame
 from regime_radar.core.edmd import EDMDResult, fit_edmd
 from regime_radar.core.hmm import fit_hmm
 from regime_radar.core.observables import ObservableConfig
-from regime_radar.core.rules import RuleResult, classify_rule_based
+from regime_radar.core.rules import classify_rule_based
 from regime_radar.models import KoopmanModes, RegimeLabel, RegimeReason, RegimeResult
+from regime_radar.provenance import InferenceRecord, write_record
+from regime_radar.version import MODEL_VERSION, code_version
 
 # Voter weights — tunable. EDMD slightly heavier when its spectral gap is wide.
 DEFAULT_WEIGHTS = {"edmd": 0.40, "hmm": 0.30, "rule": 0.30}
@@ -140,7 +142,7 @@ def _soft_vote(
 
 
 def detect_regime(
-    close: np.ndarray,
+    close: np.ndarray | None = None,
     timestamps: pd.Series | None = None,
     symbol: str = "?",
     interval: str = "1d",
@@ -148,21 +150,43 @@ def detect_regime(
     edmd_rank: int = 10,
     hmm_n_states: int = 3,
     weights: dict[str, float] | None = None,
+    *,
+    frame: PointInTimeFrame | None = None,
 ) -> RegimeResult:
     """Run the full ensemble and produce a single auditable RegimeResult.
 
+    Detection consumes a point-in-time contract. Either pass a ``frame`` directly, or pass
+    raw ``close`` (+ optional ``timestamps``) and a frame is built internally — both paths
+    get the same no-look-ahead truncation guarantee, so neither can ever see a bar dated
+    after the evaluation instant.
+
     Args:
-        close: 1-D price series, length T.
-        timestamps: optional matching timestamps for `as_of`.
-        symbol, interval: metadata copied through to the result.
+        close: 1-D price series, length T. Required unless ``frame`` is given.
+        timestamps: optional matching timestamps; used to set ``as_of`` to the last bar.
+        symbol, interval: metadata (ignored when ``frame`` carries its own).
         observable_config: dictionary configuration for EDMD.
         edmd_rank: SVD truncation rank for EDMD.
         hmm_n_states: HMM state count.
         weights: override default voter weights.
+        frame: a pre-built :class:`PointInTimeFrame`. Preferred at call sites that already
+            hold one (e.g. walk-forward evaluation), as it makes the no-leak guarantee
+            explicit and skips re-truncation.
     """
-    close = np.asarray(close, dtype=float)
+    # 1) Resolve the point-in-time contract.
+    if frame is None:
+        if close is None:
+            raise ValueError("detect_regime requires either `frame=` or `close=`.")
+        frame = PointInTimeFrame.from_arrays(
+            np.asarray(close, dtype=float),
+            timestamps,
+            symbol=symbol,
+            interval=interval,
+        )
+    close = frame.close
+    symbol = frame.symbol
+    interval = frame.interval
 
-    # 1) EDMD voter
+    # 2) EDMD voter
     edmd = fit_edmd(close, config=observable_config, rank=edmd_rank)
     rule = classify_rule_based(close)
 
@@ -261,12 +285,9 @@ def detect_regime(
     ]
     reasons.sort(key=lambda r: r.contribution, reverse=True)
 
-    as_of: datetime
-    if timestamps is not None and len(timestamps) > 0:
-        ts = pd.to_datetime(timestamps.iloc[-1])
-        as_of = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else datetime.now()
-    else:
-        as_of = datetime.now()
+    # as_of and the input hash come from the point-in-time contract — single source of truth.
+    as_of = frame.as_of
+    input_hash = frame.input_hash()
 
     modes = KoopmanModes(
         eigenvalues=[complex(z) for z in edmd.eigenvalues],
@@ -277,7 +298,7 @@ def detect_regime(
         spectral_gap=edmd.spectral_gap,
     )
 
-    return RegimeResult(
+    result = RegimeResult(
         symbol=symbol,
         interval=interval,
         as_of=as_of,
@@ -289,4 +310,31 @@ def detect_regime(
         method_votes={"edmd": edmd_label, "hmm": hmm_label, "rule": rule_label},
         realized_vol=rule.annualised_vol,
         trend_strength=rule.trend_strength,
+        model_version=MODEL_VERSION,
+        code_version=code_version(),
+        input_hash=input_hash,
     )
+
+    # Provenance: append an immutable record when enabled. Best-effort — never let logging
+    # break a detection.
+    settings = get_settings()
+    if settings.provenance_enabled:
+        try:
+            write_record(
+                InferenceRecord(
+                    as_of=str(result.as_of),
+                    symbol=result.symbol,
+                    interval=result.interval,
+                    model_version=result.model_version,
+                    code_version=result.code_version,
+                    input_hash=result.input_hash,
+                    label=result.label.value,
+                    confidence=result.confidence,
+                    probabilities={k.value: float(v) for k, v in result.probabilities.items()},
+                ),
+                settings.provenance_dir / f"{result.symbol.replace('/', '_')}.jsonl",
+            )
+        except Exception:  # noqa: BLE001 — provenance must never break detection
+            pass
+
+    return result

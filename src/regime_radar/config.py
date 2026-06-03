@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     # Output
     artifacts_dir: Path = Field(default=Path("./artifacts"))
 
+    # Provenance / reproducibility (R0)
+    provenance_enabled: bool = Field(
+        default=False,
+        description="If true, detect_regime appends an immutable InferenceRecord per call.",
+    )
+    provenance_dir: Path = Field(
+        default=Path("./artifacts/provenance"),
+        description="Directory for append-only JSONL inference logs.",
+    )
+
 
 _settings: Settings | None = None
 
