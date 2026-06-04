@@ -51,6 +51,23 @@ class Settings(BaseSettings):
         description="Directory for append-only JSONL inference logs.",
     )
 
+    # Calibration & uncertainty (R1)
+    calibration_enabled: bool = Field(
+        default=True,
+        description="If true, detection uses the calibration artifact when one is present.",
+    )
+    calibration_artifact: Path = Field(
+        default=Path("./artifacts/calibration.json"),
+        description="Path to the fitted calibration artifact (created by `regime calibrate`).",
+    )
+    raw_hmm_dampening: bool = Field(
+        default=True,
+        description=(
+            "Keep the hand-tuned HMM-confidence dampening ladder. Default True preserves R0 "
+            "behaviour; R2 will A/B this against calibration to retire it."
+        ),
+    )
+
 
 _settings: Settings | None = None
 

@@ -63,7 +63,14 @@ class RegimeResult(BaseModel):
     as_of: datetime = Field(description="Timestamp of the last bar used.")
 
     label: RegimeLabel
-    confidence: float = Field(ge=0.0, le=1.0, description="Calibrated probability of the label.")
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Probability of the label. Calibrated (temperature-scaled) when a calibration "
+            "artifact is present and `calibrated` is True; otherwise the raw soft-vote value."
+        ),
+    )
     probabilities: dict[RegimeLabel, float] = Field(
         description="Full distribution over labels — sums to ~1.",
     )
@@ -91,6 +98,36 @@ class RegimeResult(BaseModel):
     input_hash: str = Field(
         default="",
         description="Stable SHA-256 (truncated) of the point-in-time inputs; identical inputs → identical hash.",
+    )
+
+    # --- Calibration & uncertainty (R1) ------------------------------------------------
+    # Populated when a calibration artifact is loaded; otherwise sensible defaults keep the
+    # result valid and behaviour identical to the uncalibrated detector.
+    calibrated: bool = Field(
+        default=False,
+        description="True if `confidence`/`probabilities` were temperature-calibrated.",
+    )
+    calibrator_version: str | None = Field(
+        default=None,
+        description="Identifier of the calibration artifact used, e.g. 'synthetic@1.1.0'.",
+    )
+    prediction_set: list[RegimeLabel] = Field(
+        default_factory=list,
+        description="Conformal prediction set — labels covering the true regime at `coverage_level`.",
+    )
+    coverage_level: float | None = Field(
+        default=None,
+        description="Target coverage (1 - alpha) of the conformal prediction set, e.g. 0.9.",
+    )
+    ood_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Out-of-distribution score in [0,1]; high = market state unlike the fit data.",
+    )
+    in_distribution: bool = Field(
+        default=True,
+        description="False when `ood_score` exceeds the artifact's OOD threshold — trust the label less.",
     )
 
 

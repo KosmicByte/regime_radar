@@ -22,6 +22,20 @@ When `provenance_enabled` is set, each detection also appends an immutable `Infe
 
 The contract reserves a `with_exogenous` hook (currently a documented `NotImplementedError`) for macro / cross-asset features that will carry their own `known_at` publication lag — so those features can be added later without a breaking change.
 
+## Calibration & uncertainty (R1)
+
+A point label with a raw probability is not enough to act on safely. R1 adds three things, all driven by a single fitted artifact (`calibration/artifact.py`, plain JSON), produced by `regime calibrate`:
+
+1. **Calibrated confidence** — temperature scaling (`calibration/calibrator.py`) corrects the sharpness of the soft-vote distribution with one learned scalar, fit to minimise NLL on a harvested calibration set. Because `softmax(log p / T)` preserves the per-row argmax, **calibration never changes the label** — it only makes `confidence` honest. This is why R1 cannot regress accuracy.
+2. **Conformal prediction sets** — split conformal (`calibration/conformal.py`) with nonconformity `1 - p(true)` yields a label set with a distribution-free coverage guarantee at the target `1 - alpha`. The set surfaces plausible alternatives and is never empty (the argmax is always retained).
+3. **Out-of-distribution score** — a Mahalanobis distance in a small feature space derived entirely from the `RegimeResult` (`calibration/ood.py`), mapped through the chi-square CDF to [0, 1]. High means the current market state is unlike the fit data, so the label should be trusted less.
+
+`detect_regime` applies the artifact when one is present and `calibration_enabled` is set; with `calibrate=False` (used while *fitting* the calibrator, and for A/B tests) it returns raw output. When no artifact exists, behaviour is identical to the uncalibrated detector — calibration is purely additive.
+
+The artifact records its `fit_source`. Today that is `"synthetic"`: the calibrator is fit on the synthetic battery because real NSE data is not yet wired in, and the artifact says so explicitly. Re-fitting on real data later is a single `regime calibrate` run.
+
+R1 also gates the hand-tuned HMM-confidence dampening ladder in `regime.py` behind `raw_hmm_dampening` (default on). Calibration now sits on top of it; the R2 evaluation work will A/B the ladder off against calibration to decide whether to retire it.
+
 ## Dependency graph
 
 ```
@@ -44,13 +58,14 @@ The contract reserves a `with_exogenous` hook (currently a documented `NotImplem
                   │
             models.py (Pydantic v2)
             version.py · provenance.py (R0: versioning + inference log)
+            calibration/ (R1: temperature · conformal · OOD)
                   │
         ┌─────────┼─────────┐
         ▼         ▼         ▼
        cli/      eval/    viz/
 ```
 
-`core/` has zero external coupling beyond numpy/scipy/hmmlearn (the R0 additions use only stdlib `hashlib`/`json`). `cli/`, `eval/`, and `viz/` all depend on `core/` and `models.py` but never on each other.
+`core/` has zero external coupling beyond numpy/scipy/hmmlearn (the R0 additions use only stdlib `hashlib`/`json`; the R1 calibration layer uses scipy, already a dependency). `cli/`, `eval/`, and `viz/` all depend on `core/` and `models.py` but never on each other. `core/regime.py` consumes the `calibration/` leaf modules to apply an artifact, but the fit path (`calibration/fit.py`) lives outside the hot path and is only invoked by `regime calibrate`, so there is no import cycle.
 
 ## The ensemble
 

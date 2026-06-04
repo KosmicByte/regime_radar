@@ -4,11 +4,11 @@
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-44%20passed-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)](#testing)
 
 RegimeRadar classifies the current state of a market — *trending up/down, mean-reverting, high-vol chop, breakout, or low-vol grind* — and produces an auditable explanation for every label. Built for Indian equity markets with native support for indices and F&O-eligible stocks.
 
-Every detection runs through a **point-in-time contract** that makes look-ahead bias structurally impossible, and is stamped with a model version, code version, and input hash so any past result is reproducible and auditable.
+Every detection runs through a **point-in-time contract** that makes look-ahead bias structurally impossible, is stamped with a model version, code version, and input hash so any past result is reproducible and auditable, and — once a calibration artifact is fit — reports **calibrated confidence**, a **conformal prediction set**, and an **out-of-distribution score** so you know when to trust the label and when the market looks unlike anything the detector has seen.
 
 ## Quickstart
 
@@ -43,6 +43,16 @@ Detection consumes a `PointInTimeFrame` — a contract that truncates every inpu
 
 Each `RegimeResult` carries `model_version` (the detection-logic semver, bumped whenever outputs can change), `code_version` (git SHA or package version), and `input_hash` (a stable hash of the inputs). With `REGIME_PROVENANCE_ENABLED=true`, every detection also appends an immutable JSONL inference record under `artifacts/provenance/`, turning "why did the regime flip on that date?" into a lookup rather than a guess.
 
+## Calibrated confidence & uncertainty
+
+Run `regime calibrate` once to fit a calibration artifact. After that, every detection reports:
+
+- **Calibrated confidence** — temperature-scaled so "70%" means right ~70% of the time. Because temperature scaling preserves the argmax, calibration never changes the label, only its honesty.
+- **A conformal prediction set** — a set of labels guaranteed to cover the true regime at the target rate (default 90%), so you see the plausible alternatives, not just the point pick.
+- **An out-of-distribution score** — a 0–1 novelty signal; when it's high, the current market looks unlike the fit data and the label should be trusted less.
+
+The calibrator is currently fit on the synthetic battery and is marked as such; re-running `regime calibrate` on real data later refreshes it with no code change. See [`docs/cli.md`](docs/cli.md#regime-calibrate).
+
 ## Testing
 
 ```bash
@@ -50,7 +60,7 @@ uv run pytest                      # unit tests (~3 seconds)
 uv run pytest -m slow              # add synthetic benchmark suite (~80 seconds)
 ```
 
-Current status: **44/44 tests passing** — 14 math-layer, 14 ensemble on synthetic regimes, 14 point-in-time/provenance (R0), 2 benchmark gates.
+Current status: **54/54 tests passing** — 14 math-layer, 14 ensemble on synthetic regimes, 14 point-in-time/provenance (R0), 10 calibration/conformal/OOD (R1), 2 benchmark gates.
 
 ## License
 

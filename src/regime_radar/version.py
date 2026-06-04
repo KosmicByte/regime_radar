@@ -14,7 +14,7 @@ from functools import lru_cache
 
 # Detection-logic version. Bump on ANY change that can alter outputs for identical input
 # (new voter, changed thresholds, new calibration). Keep in lockstep with a CHANGELOG entry.
-MODEL_VERSION = "1.0.0"
+MODEL_VERSION = "1.1.1"
 
 
 @lru_cache(maxsize=1)

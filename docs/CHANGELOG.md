@@ -14,6 +14,54 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 The enterprise-hardening track. Goal: make RegimeRadar trustworthy enough to be load-bearing
 for the wider ecosystem before adding new modelling capability.
 
+### MODEL_VERSION 1.1.1 — R1 fix: robust OOD scoring
+
+**Fixed**
+- `calibration/ood.py` — `ood_score` could return `NaN` when a detection's feature vector
+  contained a non-finite value (observed on a real-market symbol whose window had a flat,
+  zero-variance stretch, making a Sharpe-/gap-style feature divide by zero). The score now
+  imputes any non-finite feature to the reference mean (neutral contribution), clamps the
+  squared Mahalanobis distance non-negative, and falls back to 0.0 if anything is still
+  non-finite — so a detection can never emit a `NaN` OOD score. Added regression tests.
+
+### MODEL_VERSION 1.1.0 — R1: calibration & uncertainty
+
+**Added**
+- `calibration/` package:
+  - `artifact.py` — `CalibrationArtifact`, a versioned JSON bundle (temperature, conformal
+    threshold, OOD reference) that records its `fit_source` and `model_version`.
+  - `calibrator.py` — temperature scaling. `softmax(log p / T)` preserves the argmax, so
+    calibration corrects confidence without ever changing the label.
+  - `conformal.py` — split-conformal prediction sets with a distribution-free coverage
+    guarantee at `1 - alpha`; never returns an empty set.
+  - `ood.py` — Mahalanobis out-of-distribution score in [0, 1], from a feature vector derived
+    entirely from the `RegimeResult` (no recomputation).
+  - `fit.py` — harvests detections across the synthetic battery (with calibration off) and
+    fits the full artifact; returns before/after diagnostics.
+- `eval/calibration_metrics.py` — ECE, Brier, reliability curve, empirical coverage.
+- `cli/calibrate.py` — `regime calibrate`: fit + persist the artifact and print calibration
+  quality. Registered in `__main__.py`.
+- `tests/test_r1_calibration.py` — 9 tests, including label-preservation and held-out
+  conformal coverage.
+
+**Changed**
+- `models.py` — `RegimeResult` gains `calibrated`, `calibrator_version`, `prediction_set`,
+  `coverage_level`, `ood_score`, `in_distribution` (all defaulted so behaviour is unchanged
+  when no artifact is present). The `confidence` docstring is now accurate.
+- `core/regime.py` — `detect_regime` gains a `calibrate` flag; applies the artifact (when
+  present and enabled) via a cached loader; the hand-tuned HMM dampening ladder is now gated
+  behind the `raw_hmm_dampening` setting (default on).
+- `config.py` — adds `calibration_enabled`, `calibration_artifact`, `raw_hmm_dampening`.
+
+**Notes**
+- Calibration is additive: with no artifact, output is identical to R0. Temperature scaling
+  preserves the argmax, so **label accuracy is unchanged** — only confidence quality improves.
+  On the synthetic harvest, ECE dropped ~0.21 → ~0.10–0.14 and conformal coverage hit the 90%
+  target.
+- The artifact is **fit on synthetic data** and marked `fit_source="synthetic"`; coverage and
+  OOD thresholds are indicative until re-fit on real data (a one-command refresh).
+- `MODEL_VERSION` → 1.1.0: a minor bump for additive, label-preserving output changes.
+
 ### MODEL_VERSION 1.0.0 — R0: point-in-time contract & reproducible inference
 
 **Added**
@@ -53,10 +101,9 @@ for the wider ecosystem before adding new modelling capability.
 
 ## Upcoming (planned on this branch)
 
-- **R1 — Calibration & uncertainty:** make `RegimeResult.confidence` genuinely calibrated;
-  add conformal prediction sets and an out-of-distribution score.
 - **R2 — Evaluation rigor:** confidence intervals on the headline metric, label-stability
-  (whipsaw) metrics, and an economic-value check.
+  (whipsaw) metrics, an economic-value check, and the A/B that decides whether to retire the
+  HMM dampening ladder now that calibration sits on top of it.
 - **R2.5 — Exogenous features:** macro / cross-asset conditioning features via the
   `with_exogenous` hook, with strict `known_at` point-in-time discipline.
 

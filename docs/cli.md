@@ -224,6 +224,43 @@ See [`docs/evaluation.md`](evaluation.md) for the full methodology and accuracy 
 
 ---
 
+## `regime calibrate`
+
+Fits the calibration artifact — temperature scaling, the conformal threshold, and the
+out-of-distribution reference — by harvesting detections across the synthetic battery, then
+writes it to the configured artifact path. Once present, every `detect`/`scan` run uses it
+automatically to produce calibrated confidence, a conformal prediction set, and an OOD score.
+
+```bash
+uv run regime calibrate                       # fit + write artifacts/calibration.json
+uv run regime calibrate --alpha 0.05          # target 95% conformal coverage
+uv run regime calibrate --step 42 --out ./artifacts/calibration.json
+```
+
+### Flags
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--window`, `-w` | `252` | Walk-forward window used during harvesting |
+| `--step` | `21` | Stride between harvested windows |
+| `--edmd-rank` | `10` | SVD truncation rank for EDMD |
+| `--hmm-states` | `3` | HMM state count |
+| `--alpha` | `0.1` | Miscoverage rate; conformal coverage target is `1 - alpha` |
+| `--out`, `-o` | from settings | Artifact output path |
+
+### Output
+
+A before/after calibration-quality table (ECE and Brier), then a summary with the fitted
+temperature, empirical conformal coverage vs target, OOD flag rate, and the harvested sample
+count. Because the fit is currently on synthetic data, the command prints a note that coverage
+and OOD thresholds are indicative rather than real-market guarantees — re-run on real data once
+it is wired in to refresh the artifact (no code change required).
+
+> Temperature scaling preserves the argmax, so calibration never changes the regime label —
+> only how honest the confidence is. Running `calibrate` therefore cannot regress accuracy.
+
+---
+
 ## Configuration
 
 CLI defaults are populated from environment variables, all namespaced `REGIME_*`. A template is provided at `.env.example`:
@@ -237,6 +274,9 @@ CLI defaults are populated from environment variables, all namespaced `REGIME_*`
 | `REGIME_EDMD_RANK` | `10` | Default EDMD truncation rank |
 | `REGIME_HMM_N_STATES` | `3` | Default HMM state count |
 | `REGIME_TRANSITION_THRESHOLD` | `0.6` | Risk above this is flagged as a crossed threshold |
+| `REGIME_CALIBRATION_ENABLED` | `true` | Use the calibration artifact when one is present |
+| `REGIME_CALIBRATION_ARTIFACT` | `./artifacts/calibration.json` | Path to the fitted calibration artifact |
+| `REGIME_PROVENANCE_ENABLED` | `false` | Append an immutable inference record per detection |
 | `MARKETLAKE_DATA_DIR` | — | If set and MarketLake is importable, used in preference to yfinance |
 
 See [`config.py`](../src/regime_radar/config.py) for the full list.

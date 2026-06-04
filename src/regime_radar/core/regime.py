@@ -11,9 +11,15 @@ weighted probability distribution, and `reasons` is populated so the user can au
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
+from regime_radar.calibration.artifact import CalibrationArtifact
+from regime_radar.calibration.calibrator import apply_temperature
+from regime_radar.calibration.conformal import prediction_set
+from regime_radar.calibration.ood import feature_vector, ood_score
 from regime_radar.config import get_settings
 from regime_radar.core.contract import PointInTimeFrame
 from regime_radar.core.edmd import EDMDResult, fit_edmd
@@ -26,6 +32,53 @@ from regime_radar.version import MODEL_VERSION, code_version
 
 # Voter weights — tunable. EDMD slightly heavier when its spectral gap is wide.
 DEFAULT_WEIGHTS = {"edmd": 0.40, "hmm": 0.30, "rule": 0.30}
+
+# Cache for the calibration artifact, keyed by (path, mtime) so a re-fit is picked up.
+_ARTIFACT_CACHE: dict[tuple[str, float], CalibrationArtifact | None] = {}
+
+
+def _load_artifact(path: Path) -> CalibrationArtifact | None:
+    """Load (and cache) the calibration artifact; returns None if absent or unreadable."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    key = (str(path), path.stat().st_mtime)
+    if key not in _ARTIFACT_CACHE:
+        _ARTIFACT_CACHE[key] = CalibrationArtifact.try_load(path)
+    return _ARTIFACT_CACHE[key]
+
+
+def _apply_calibration(result: RegimeResult, artifact: CalibrationArtifact) -> RegimeResult:
+    """Return a calibrated copy of ``result`` using ``artifact``.
+
+    Temperature scaling preserves the argmax, so the label is unchanged — only the confidence
+    and full distribution are corrected. Adds the conformal prediction set and the OOD score.
+    """
+    labels = [RegimeLabel(name) for name in artifact.labels]
+    raw = np.array([result.probabilities.get(lbl, 0.0) for lbl in labels], dtype=float)
+    cal = apply_temperature(raw, artifact.temperature)
+    cal = cal / cal.sum() if cal.sum() > 0 else cal
+    probs_dict = {lbl: float(p) for lbl, p in zip(labels, cal, strict=False)}
+    final_label = max(probs_dict, key=probs_dict.get)
+
+    pset = prediction_set(cal, artifact.conformal_threshold, artifact.labels)
+    feat = feature_vector(result)
+    score = ood_score(
+        feat, artifact.ood_mean_arr, artifact.ood_std_arr, artifact.ood_inv_cov_arr
+    )
+    return result.model_copy(
+        update={
+            "label": final_label,
+            "confidence": probs_dict[final_label],
+            "probabilities": probs_dict,
+            "calibrated": True,
+            "calibrator_version": f"{artifact.fit_source}@{artifact.model_version}",
+            "prediction_set": [RegimeLabel(x) for x in pset],
+            "coverage_level": artifact.coverage_level,
+            "ood_score": float(score),
+            "in_distribution": bool(score <= artifact.ood_threshold),
+        }
+    )
 
 
 def _label_from_spectrum(
@@ -152,6 +205,7 @@ def detect_regime(
     weights: dict[str, float] | None = None,
     *,
     frame: PointInTimeFrame | None = None,
+    calibrate: bool = True,
 ) -> RegimeResult:
     """Run the full ensemble and produce a single auditable RegimeResult.
 
@@ -171,7 +225,11 @@ def detect_regime(
         frame: a pre-built :class:`PointInTimeFrame`. Preferred at call sites that already
             hold one (e.g. walk-forward evaluation), as it makes the no-leak guarantee
             explicit and skips re-truncation.
+        calibrate: apply the calibration artifact when one is available (default True). Set
+            False to obtain raw soft-vote output — used when *fitting* the calibrator, and
+            for A/B comparisons.
     """
+    settings = get_settings()
     # 1) Resolve the point-in-time contract.
     if frame is None:
         if close is None:
@@ -244,14 +302,17 @@ def detect_regime(
         rule.label in (RegimeLabel.TRENDING_UP, RegimeLabel.TRENDING_DOWN, RegimeLabel.BREAKOUT)
         and rule.label != hmm_label
     )
-    if is_directional and edmd_disagrees_directionally and rule_disagrees_directionally:
-        hmm_conf *= 0.25  # two-against-one — HMM is almost certainly wrong
-    elif is_directional and rule_says_reverting and rule.half_life_days < 15.0:
-        hmm_conf *= 0.3  # strong price-level reversion evidence
-    elif is_directional and rule_says_reverting and rule.variance_ratio_5 < 0.70:
-        hmm_conf *= 0.4  # strong return-space reversion evidence
-    elif is_directional and abs(rule.trend_strength) < 0.05:
-        hmm_conf *= 0.6  # weak Sharpe makes HMM's confidence unreliable
+    # The dampening ladder is a hand-tuned heuristic. R1 keeps it on by default; calibration
+    # (R1) now sits on top, and R2 will A/B with it OFF to decide whether to retire it.
+    if settings.raw_hmm_dampening:
+        if is_directional and edmd_disagrees_directionally and rule_disagrees_directionally:
+            hmm_conf *= 0.25  # two-against-one — HMM is almost certainly wrong
+        elif is_directional and rule_says_reverting and rule.half_life_days < 15.0:
+            hmm_conf *= 0.3  # strong price-level reversion evidence
+        elif is_directional and rule_says_reverting and rule.variance_ratio_5 < 0.70:
+            hmm_conf *= 0.4  # strong return-space reversion evidence
+        elif is_directional and abs(rule.trend_strength) < 0.05:
+            hmm_conf *= 0.6  # weak Sharpe makes HMM's confidence unreliable
 
     # 3) Rule voter
     rule_label = rule.label
@@ -315,9 +376,16 @@ def detect_regime(
         input_hash=input_hash,
     )
 
+    # R1: calibrate confidence + add prediction set and OOD score when an artifact is present.
+    # Temperature scaling preserves the label, so this never changes the decision — only its
+    # honesty. Disabled via `calibrate=False` (e.g. while fitting the calibrator).
+    if calibrate and settings.calibration_enabled:
+        artifact = _load_artifact(settings.calibration_artifact)
+        if artifact is not None:
+            result = _apply_calibration(result, artifact)
+
     # Provenance: append an immutable record when enabled. Best-effort — never let logging
     # break a detection.
-    settings = get_settings()
     if settings.provenance_enabled:
         try:
             write_record(
@@ -331,6 +399,12 @@ def detect_regime(
                     label=result.label.value,
                     confidence=result.confidence,
                     probabilities={k.value: float(v) for k, v in result.probabilities.items()},
+                    extra={
+                        "calibrated": result.calibrated,
+                        "ood_score": result.ood_score,
+                        "in_distribution": result.in_distribution,
+                        "prediction_set": [lbl.value for lbl in result.prediction_set],
+                    },
                 ),
                 settings.provenance_dir / f"{result.symbol.replace('/', '_')}.jsonl",
             )
