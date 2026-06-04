@@ -261,6 +261,46 @@ it is wired in to refresh the artifact (no code change required).
 
 ---
 
+## `regime backtest`
+
+Tests whether trading a symbol's regime has an edge. Walks the detector over the symbol's
+price history (point-in-time, no look-ahead), realises a transparent regime→position strategy
+with transaction costs, and tests it against a **shuffled-regime null** — a circular-shift
+permutation that preserves the position mix but destroys its timing alignment. The p-value is
+the fraction of the null at least as good as the real strategy.
+
+```bash
+uv run regime backtest --symbol GAIL.NS
+uv run regime backtest --symbol ^NSEI --lookback 1825 --cost-bps 3
+uv run regime backtest --symbol RELIANCE.NS --window 252 --stride 10
+```
+
+### Flags
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--symbol`, `-s` | from settings | Ticker (e.g. `GAIL.NS`, `^NSEI`) |
+| `--interval`, `-i` | `1d` | Bar interval |
+| `--lookback` | `1460` | History to pull (days) |
+| `--window`, `-w` | `126` | Detection window (bars) |
+| `--stride` | `5` | Bars between regime recomputes |
+| `--cost-bps` | `5.0` | Transaction cost charged per unit position change |
+| `--permutations` | `1000` | Shuffled-regime null draws |
+
+### Output
+
+A performance table (annualised return, Sharpe, max drawdown) for the regime strategy vs
+buy-and-hold, then an edge-test panel with the permutation p-value and verdict, label-stability
+(whipsaw rate, mean dwell), and the position map used.
+
+> **This is decision evidence, not a signal or recommendation, and not financial advice.** A
+> positive historical result does not guarantee future performance. The default position map
+> (trending → long, down → short, chop/mean-reversion → flat) is deliberately simple and
+> transparent; it is the *gate test* for whether a regime has tradeable timing, not a complete
+> strategy.
+
+---
+
 ## Configuration
 
 CLI defaults are populated from environment variables, all namespaced `REGIME_*`. A template is provided at `.env.example`:

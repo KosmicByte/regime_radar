@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-64%20passed-brightgreen)](#testing)
 
 RegimeRadar classifies the current state of a market — *trending up/down, mean-reverting, high-vol chop, breakout, or low-vol grind* — and produces an auditable explanation for every label. Built for Indian equity markets with native support for indices and F&O-eligible stocks.
 
@@ -53,6 +53,16 @@ Run `regime calibrate` once to fit a calibration artifact. After that, every det
 
 The calibrator is currently fit on the synthetic battery and is marked as such; re-running `regime calibrate` on real data later refreshes it with no code change. See [`docs/cli.md`](docs/cli.md#regime-calibrate).
 
+## Does trading the regime have an edge?
+
+Accuracy is not the same as profitability. `regime backtest` answers the economic question directly: it walks the detector over a symbol's real history (point-in-time, no look-ahead), realises a transparent regime→position strategy with transaction costs, and tests it against a **shuffled-regime null**.
+
+```bash
+uv run regime backtest --symbol GAIL.NS
+```
+
+The verdict is a permutation p-value: the fraction of randomly time-shifted versions of the same position sequence that match or beat the real strategy's Sharpe. A low p-value means the regime has genuine *timing* skill, not just a lucky position mix. The report also includes Sharpe vs buy-and-hold, max drawdown, and label stability (whipsaw rate). This is decision evidence — not a signal, not a recommendation, not financial advice. See [`docs/cli.md`](docs/cli.md#regime-backtest).
+
 ## Testing
 
 ```bash
@@ -60,7 +70,7 @@ uv run pytest                      # unit tests (~3 seconds)
 uv run pytest -m slow              # add synthetic benchmark suite (~80 seconds)
 ```
 
-Current status: **54/54 tests passing** — 14 math-layer, 14 ensemble on synthetic regimes, 14 point-in-time/provenance (R0), 10 calibration/conformal/OOD (R1), 2 benchmark gates.
+Current status: **64/64 tests passing** — 14 math-layer, 14 ensemble on synthetic regimes, 14 point-in-time/provenance (R0), 10 calibration/conformal/OOD (R1), 10 economic/stability/uncertainty (R2), 2 benchmark gates.
 
 ## License
 

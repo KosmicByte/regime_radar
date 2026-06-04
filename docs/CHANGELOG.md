@@ -14,6 +14,43 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 The enterprise-hardening track. Goal: make RegimeRadar trustworthy enough to be load-bearing
 for the wider ecosystem before adding new modelling capability.
 
+### R2 (part 1) — Economic validation, stability & confidence intervals
+
+No `MODEL_VERSION` change: R2 is pure measurement and adds no detection-logic change — it does
+not alter `detect_regime` output. It answers a different question from accuracy: *does trading
+the regime have an edge?*
+
+**Added**
+- `eval/economic.py` — walk-forward, point-in-time regime backtest with a transparent
+  regime→position map and transaction costs, plus `evaluate_economic`: Sharpe vs buy-and-hold,
+  max drawdown, turnover, and a **shuffled-regime permutation test** (circular-shift null) that
+  isolates timing skill from the base position mix. Validated: detects significant edge on a
+  switching series (p≈0.03), correctly finds none on a pure trend (≈ buy-hold) or on chop
+  (stays flat).
+- `eval/uncertainty.py` — Wilson interval for proportions and a percentile bootstrap, so
+  headline metrics ship as "76% [72, 80]" rather than a bare point estimate.
+- `eval/stability.py` — whipsaw rate, mean/max dwell, switch count: the steadiness of the
+  label sequence, since every flip costs money under the cost model.
+- `cli/backtest.py` — `regime backtest --symbol GAIL.NS`: runs the economic validation on a
+  real symbol and reports edge, the permutation p-value, and stability — decision *evidence*,
+  explicitly not a recommendation or signal, with a not-financial-advice caveat. Registered in
+  `__main__.py`.
+- `tests/test_r2_evaluation.py` — 9 tests, anchored by the "beats null when timing matters /
+  doesn't when it doesn't" pair.
+- `tests/test_r2_evaluation.py` also asserts a missing close (real-feed gap) cannot NaN the
+  summary (`test_gap_in_close_does_not_poison_stats`).
+
+**Fixed**
+- `eval/economic.py` — a single NaN/missing close (observed on GAIL.NS via yfinance) poisoned
+  `mean()`/`std()` and turned the whole performance table NaN. Closes are now forward-filled
+  (point-in-time safe) before any computation, returns are sanitised to finite, and `_sharpe`
+  guards non-finite results.
+
+**Still to come in R2**
+- Fold the bootstrap CIs and stability metrics into the `regime eval` benchmark output.
+- The `raw_hmm_dampening` on/off A/B against calibration, to decide whether to retire the
+  hand-tuned HMM ladder.
+
 ### MODEL_VERSION 1.1.1 — R1 fix: robust OOD scoring
 
 **Fixed**
@@ -101,9 +138,8 @@ for the wider ecosystem before adding new modelling capability.
 
 ## Upcoming (planned on this branch)
 
-- **R2 — Evaluation rigor:** confidence intervals on the headline metric, label-stability
-  (whipsaw) metrics, an economic-value check, and the A/B that decides whether to retire the
-  HMM dampening ladder now that calibration sits on top of it.
+- **R2 (remainder):** fold bootstrap CIs + stability into `regime eval`; run the
+  `raw_hmm_dampening` A/B against calibration to decide whether to retire the HMM ladder.
 - **R2.5 — Exogenous features:** macro / cross-asset conditioning features via the
   `with_exogenous` hook, with strict `known_at` point-in-time discipline.
 

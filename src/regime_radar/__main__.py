@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import typer
 
-from regime_radar.cli import calibrate, detect, eval as eval_cmd, explain, plot, scan
+from regime_radar.cli import (
+    backtest,
+    calibrate,
+    detect,
+    eval as eval_cmd,
+    explain,
+    plot,
+    scan,
+)
 
 app = typer.Typer(
     name="regime",
@@ -19,6 +27,7 @@ app.add_typer(scan.app, name="scan", help="Run regime detection across a watchli
 app.add_typer(plot.app, name="plot", help="Plot eigenvalue spectrum, regime timeline, risk.")
 app.add_typer(eval_cmd.app, name="eval", help="Evaluate on synthetic ground truth (walk-forward).")
 app.add_typer(calibrate.app, name="calibrate", help="Fit the calibration artifact (temperature + conformal + OOD).")
+app.add_typer(backtest.app, name="backtest", help="Test a symbol's regime strategy vs a shuffled-regime null.")
 
 
 if __name__ == "__main__":
