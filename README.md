@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-64%20passed-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-69%20passed-brightgreen)](#testing)
 
 RegimeRadar classifies the current state of a market — *trending up/down, mean-reverting, high-vol chop, breakout, or low-vol grind* — and produces an auditable explanation for every label. Built for Indian equity markets with native support for indices and F&O-eligible stocks.
 
@@ -70,7 +70,7 @@ uv run pytest                      # unit tests (~3 seconds)
 uv run pytest -m slow              # add synthetic benchmark suite (~80 seconds)
 ```
 
-Current status: **64/64 tests passing** — 14 math-layer, 14 ensemble on synthetic regimes, 14 point-in-time/provenance (R0), 10 calibration/conformal/OOD (R1), 10 economic/stability/uncertainty (R2), 2 benchmark gates.
+Current status: **69/69 tests passing** — 14 math-layer, 14 ensemble on synthetic regimes, 14 point-in-time/provenance (R0), 10 calibration/conformal/OOD (R1), 10 economic/stability/uncertainty (R2), 5 benchmark CIs + dampening A/B (R2), 2 benchmark gates.
 
 ## License
 

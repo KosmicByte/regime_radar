@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from regime_radar.eval.stability import StabilityReport, stability
 from regime_radar.eval.synthetic import (
     RegimeSpec,
     SyntheticSeries,
-    breakout_jump,
     gbm_trending,
     high_vol_chop,
     low_vol_grind,
@@ -53,6 +53,76 @@ class BenchmarkResult:
         for t, p in zip(all_true, all_pred, strict=False):
             m[idx[t], idx[p]] += 1
         return m, labels
+
+    def accuracy_ci(
+        self, *, n_boot: int = 2000, alpha: float = 0.05, seed: int = 0
+    ) -> tuple[float, float, float]:
+        """Bootstrap CI on overall accuracy, resampling *scenarios* (not windows).
+
+        Windows within a scenario are autocorrelated, so resampling them understates the
+        interval. Resampling whole scenarios (the independent unit) gives an honest spread:
+        the headline becomes "76% [70, 82]" rather than a bare point estimate.
+        """
+        scenarios = list(self.per_scenario.values())
+        if len(scenarios) < 2:
+            acc = self.overall_accuracy
+            return (acc, acc, acc)
+        rng = np.random.default_rng(seed)
+        k = len(scenarios)
+        boots = np.empty(n_boot)
+        for b in range(n_boot):
+            pick = rng.integers(0, k, k)
+            pred = np.concatenate([scenarios[i].predicted for i in pick])
+            true = np.concatenate([scenarios[i].true for i in pick])
+            boots[b] = np.mean(pred == true) if len(pred) else 0.0
+        lo = float(np.percentile(boots, 100 * alpha / 2))
+        hi = float(np.percentile(boots, 100 * (1 - alpha / 2)))
+        return (self.overall_accuracy, lo, hi)
+
+    def stability_summary(self) -> StabilityReport:
+        """Aggregate label-stability across every scenario's predicted sequence.
+
+        Whipsaw and switch counts are summed over scenarios; dwell is averaged. Tells you how
+        steady the detector's output is — a jumpy detector is expensive to trade regardless of
+        accuracy.
+        """
+        total_n = 0
+        total_switches = 0
+        dwell_means: list[float] = []
+        max_dwell = 0
+        for r in self.per_scenario.values():
+            rep = stability(list(r.predicted))
+            total_n += rep.n
+            total_switches += rep.n_switches
+            dwell_means.append(rep.mean_dwell)
+            max_dwell = max(max_dwell, rep.max_dwell)
+        whipsaw = total_switches / max(total_n - len(self.per_scenario), 1)
+        return StabilityReport(
+            n=total_n,
+            whipsaw_rate=float(whipsaw),
+            n_switches=int(total_switches),
+            mean_dwell=float(np.mean(dwell_means)) if dwell_means else 0.0,
+            max_dwell=int(max_dwell),
+        )
+
+    def macro_f1(self) -> tuple[float, dict[str, float]]:
+        """Macro-averaged F1 across regimes, plus per-regime F1, from the pooled confusion.
+
+        Accuracy can flatter a detector that nails the common regime and fails the rare one.
+        Macro-F1 weights every regime equally, exposing that.
+        """
+        m, labels = self.confusion()
+        per: dict[str, float] = {}
+        for i, lbl in enumerate(labels):
+            tp = m[i, i]
+            fp = m[:, i].sum() - tp
+            fn = m[i, :].sum() - tp
+            prec = tp / (tp + fp) if (tp + fp) else 0.0
+            rec = tp / (tp + fn) if (tp + fn) else 0.0
+            f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+            per[lbl.value] = float(f1)
+        macro = float(np.mean(list(per.values()))) if per else 0.0
+        return macro, per
 
 
 def default_battery(n_per_scenario: int = 1008, seeds_per_scenario: int = 5) -> list[SyntheticSeries]:
@@ -100,6 +170,7 @@ def benchmark(
     edmd_rank: int = 10,
     hmm_n_states: int = 3,
     grouped: bool = True,
+    raw_hmm_dampening: bool | None = None,
 ) -> BenchmarkResult:
     """Run walk-forward across the battery and aggregate."""
     series = series or default_battery()
@@ -113,9 +184,94 @@ def benchmark(
                 edmd_rank=edmd_rank,
                 hmm_n_states=hmm_n_states,
                 grouped=grouped,
+                raw_hmm_dampening=raw_hmm_dampening,
             )
             # Key the dict to keep multiple seeds distinguishable
             result.per_scenario[f"{s.name}_{i}"] = wf
         except Exception:  # noqa: BLE001
             continue
     return result
+
+
+@dataclass
+class ABResult:
+    """A/B comparison of the detector with the HMM-dampening ladder on vs off."""
+
+    on: BenchmarkResult
+    off: BenchmarkResult
+
+    def summary(self, *, margin: float = 0.01, n_boot: int = 2000, seed: int = 0) -> dict:
+        """Paired comparison of ON vs OFF on the shared battery.
+
+        Because both arms run on the *same* scenarios, the right test is paired: bootstrap the
+        per-scenario accuracy delta (OFF − ON). The ladder can be retired when OFF is
+        non-inferior — its delta CI lower bound is no worse than ``-margin`` (default 1pp).
+        """
+        keys = [k for k in self.on.per_scenario if k in self.off.per_scenario]
+        on_acc = np.array([self.on.per_scenario[k].accuracy for k in keys])
+        off_acc = np.array([self.off.per_scenario[k].accuracy for k in keys])
+        deltas = off_acc - on_acc
+        point_delta = float(deltas.mean()) if len(deltas) else 0.0
+
+        # How often do the two configs actually disagree on the label? If this is ~0 the ladder
+        # never changed an outcome on this battery, so the A/B cannot speak to retiring it —
+        # a zero accuracy delta then means "untested", not "safe to remove".
+        mismatch = 0
+        total = 0
+        for k in keys:
+            op = self.on.per_scenario[k].predicted
+            fp = self.off.per_scenario[k].predicted
+            m = min(len(op), len(fp))
+            if m:
+                mismatch += int(np.sum(op[:m] != fp[:m]))
+                total += m
+        label_divergence = float(mismatch / total) if total else 0.0
+
+        rng = np.random.default_rng(seed)
+        k = len(deltas)
+        if k > 1:
+            boots = np.array([deltas[rng.integers(0, k, k)].mean() for _ in range(n_boot)])
+            d_lo, d_hi = float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
+        else:
+            d_lo = d_hi = point_delta
+
+        on_overall, on_lo, on_hi = self.on.accuracy_ci(seed=seed)
+        off_overall, off_lo, off_hi = self.off.accuracy_ci(seed=seed)
+        on_macro, _ = self.on.macro_f1()
+        off_macro, _ = self.off.macro_f1()
+        return {
+            "on_accuracy": on_overall,
+            "on_ci": (on_lo, on_hi),
+            "off_accuracy": off_overall,
+            "off_ci": (off_lo, off_hi),
+            "delta_mean": point_delta,
+            "delta_ci": (d_lo, d_hi),
+            "on_macro_f1": on_macro,
+            "off_macro_f1": off_macro,
+            "can_retire": bool(d_lo >= -margin),
+            "margin": margin,
+            "label_divergence": label_divergence,
+            # The ladder is only "exercised" if it changes some labels; otherwise the A/B is
+            # blind to it and a zero delta means "untested", not "safe to retire".
+            "exercised": bool(label_divergence > 1e-6),
+        }
+
+
+def ab_dampening(
+    series: list[SyntheticSeries] | None = None,
+    window: int = 126,
+    step: int = 21,
+    edmd_rank: int = 10,
+    hmm_n_states: int = 3,
+    grouped: bool = True,
+) -> ABResult:
+    """Run the benchmark twice on the SAME battery: HMM dampening ladder on vs off.
+
+    This is the evidence for whether the hand-tuned ``hmm_conf *=`` heuristics still earn their
+    place now that principled calibration sits on top. The same series are used for both arms so
+    the comparison is apples-to-apples.
+    """
+    battery = series or default_battery()
+    on = benchmark(battery, window, step, edmd_rank, hmm_n_states, grouped, raw_hmm_dampening=True)
+    off = benchmark(battery, window, step, edmd_rank, hmm_n_states, grouped, raw_hmm_dampening=False)
+    return ABResult(on=on, off=off)

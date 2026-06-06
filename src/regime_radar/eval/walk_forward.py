@@ -65,6 +65,7 @@ def walk_forward(
     edmd_rank: int = 10,
     hmm_n_states: int = 3,
     grouped: bool = True,
+    raw_hmm_dampening: bool | None = None,
 ) -> WalkForwardResult:
     """Slide a window across `series`, run detect_regime, score against ground truth.
 
@@ -75,6 +76,8 @@ def walk_forward(
         edmd_rank, hmm_n_states: detector knobs.
         grouped: if True, collapse fine labels into broad groups (see below). For a
                  stricter test, set False to require exact label match.
+        raw_hmm_dampening: override the HMM-dampening setting (None = use config). Used by the
+                 A/B harness to score the detector with the hand-tuned ladder on vs off.
 
     Grouping (when grouped=True): we treat TRENDING_UP / BREAKOUT as 'directional_up'
     and TRENDING_DOWN as 'directional_down' is kept distinct; this matches how a
@@ -104,6 +107,8 @@ def walk_forward(
                 frame=frame,
                 edmd_rank=min(edmd_rank, window // 3),
                 hmm_n_states=hmm_n_states,
+                calibrate=False,  # benchmark scores the raw label; calibration can't change it
+                raw_hmm_dampening=raw_hmm_dampening,
             )
         except (ValueError, np.linalg.LinAlgError):
             continue

@@ -206,6 +206,7 @@ def detect_regime(
     *,
     frame: PointInTimeFrame | None = None,
     calibrate: bool = True,
+    raw_hmm_dampening: bool | None = None,
 ) -> RegimeResult:
     """Run the full ensemble and produce a single auditable RegimeResult.
 
@@ -303,8 +304,10 @@ def detect_regime(
         and rule.label != hmm_label
     )
     # The dampening ladder is a hand-tuned heuristic. R1 keeps it on by default; calibration
-    # (R1) now sits on top, and R2 will A/B with it OFF to decide whether to retire it.
-    if settings.raw_hmm_dampening:
+    # (R1) now sits on top, and R2 will A/B with it OFF to decide whether to retire it. The
+    # `raw_hmm_dampening` argument overrides the setting for that A/B without touching globals.
+    dampen = settings.raw_hmm_dampening if raw_hmm_dampening is None else raw_hmm_dampening
+    if dampen:
         if is_directional and edmd_disagrees_directionally and rule_disagrees_directionally:
             hmm_conf *= 0.25  # two-against-one — HMM is almost certainly wrong
         elif is_directional and rule_says_reverting and rule.half_life_days < 15.0:

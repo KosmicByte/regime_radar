@@ -14,6 +14,41 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 The enterprise-hardening track. Goal: make RegimeRadar trustworthy enough to be load-bearing
 for the wider ecosystem before adding new modelling capability.
 
+### R2 (part 2) — Benchmark confidence intervals & the HMM-dampening A/B
+
+No `MODEL_VERSION` change: still pure measurement. R2 is now complete.
+
+**Added**
+- `eval/metrics.py` — `BenchmarkResult` gains `accuracy_ci()` (bootstrap over *scenarios*, not
+  windows, since windows are autocorrelated), `stability_summary()` (whipsaw / dwell over the
+  predicted sequences), and `macro_f1()` (equal-weighted across regimes, plus per-regime F1).
+- `eval/metrics.py` — `ab_dampening()` + `ABResult`: runs the benchmark twice on the *same*
+  battery with the HMM-dampening ladder on vs off, and a **paired** bootstrap on the
+  per-scenario delta (the arms share scenarios, so a paired test is the correct one).
+- `core/regime.py`, `eval/walk_forward.py`, `eval/metrics.py` — a `raw_hmm_dampening`
+  override threaded through so the A/B can toggle the ladder without mutating global settings.
+- `cli/eval.py` — the headline now prints a 95% CI, macro-F1, and label stability; new
+  `--ab-dampening` flag runs and reports the A/B with a retire/keep verdict.
+- `tests/test_r2_eval_rigor.py` — 5 tests.
+
+**Finding (HMM-dampening A/B)**
+- On the synthetic battery the ladder changes HMM *confidence* (≈15 of 51 windows on a
+  switching series) but **never flips the final ensemble label**, so accuracy delta is exactly
+  0.0%. The synthetic evidence can neither justify nor condemn the ladder.
+- **Decision: keep `raw_hmm_dampening=True` (unchanged).** The ladder targets specific
+  real-data disagreement cases the synthetic battery does not reproduce; retiring it on a
+  zero-effect synthetic result would be unjustified. The A/B harness now exists to make this
+  call on real labelled data once it is wired in.
+
+**Refined**
+- The `--ab-dampening` verdict now distinguishes *untested* from *retire*: it reports a
+  `label_divergence` (how often ON/OFF labels differ) and, when the ladder changed no labels
+  on the battery, says so plainly ("untested here — keep it on, decide on real data") rather
+  than reading a zero-effect result as a green light to retire.
+
+**Cleanup**
+- Removed a pre-existing unused import (`breakout_jump`) from `eval/metrics.py`.
+
 ### R2 (part 1) — Economic validation, stability & confidence intervals
 
 No `MODEL_VERSION` change: R2 is pure measurement and adds no detection-logic change — it does
@@ -138,10 +173,9 @@ the regime have an edge?*
 
 ## Upcoming (planned on this branch)
 
-- **R2 (remainder):** fold bootstrap CIs + stability into `regime eval`; run the
-  `raw_hmm_dampening` A/B against calibration to decide whether to retire the HMM ladder.
 - **R2.5 — Exogenous features:** macro / cross-asset conditioning features via the
   `with_exogenous` hook, with strict `known_at` point-in-time discipline.
 
 Capability work (HSMM, regime forecasting, BOCPD, learned weights, governance/API) continues
-on the `regime-radar-forecasting` branch.
+on the `regime-radar-forecasting` branch. The HMM-dampening ladder retirement decision is
+deferred until the A/B can be run on real labelled data.

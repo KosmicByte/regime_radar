@@ -213,10 +213,13 @@ uv run regime eval --window 252 --plot       # custom window + write confusion P
 | `--hmm-states` | `3` | HMM state count |
 | `--grouped` / `--strict` | grouped | Grouped mode folds BREAKOUT into TRENDING_UP for less-strict scoring |
 | `--plot` | off | Write a confusion-matrix PNG to artifacts dir |
+| `--ab-dampening` | off | A/B the hand-tuned HMM dampening ladder (on vs off) and report the delta with CIs |
 
 ### Output
 
-A per-scenario accuracy table, the overall headline accuracy with colour-coded threshold indication (green ≥ 70%, yellow ≥ 55%, red below), and a confusion matrix.
+A per-scenario accuracy table, then a headline panel with overall accuracy **and a 95% bootstrap confidence interval** (resampling scenarios, not windows), macro-F1, and label-stability (whipsaw rate, mean dwell), followed by a confusion matrix.
+
+With `--ab-dampening`, instead runs the benchmark twice on the same battery — HMM dampening ladder on vs off — and reports both accuracies with CIs, the **paired** delta with its CI, and a retire/keep verdict for the hand-tuned heuristics. (On synthetic data the ladder changes confidence but not labels, so the decision to retire it is deferred to real-data evaluation.)
 
 Expected runtime: ~80 seconds for the default battery (30 series × ~36 walk-forward windows each).
 
