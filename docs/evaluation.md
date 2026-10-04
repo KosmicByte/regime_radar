@@ -1,42 +1,38 @@
 # Evaluation
 
-How to honestly measure regime-detection performance.
+## Headline result
 
-## The headline number — and why it's qualified
+**~76% accuracy on the default synthetic battery under grouped scoring.**
 
-**RegimeRadar achieves ~76% accuracy on the default synthetic battery under grouped scoring.**
+| Qualifier | Detail |
+|---|---|
+| Range | Individual runs yield 73–78% (6 scenario families × 5 seeds). 70% is the regression floor. |
+| Synthetic | Ground truth is per-bar labels from generative processes. Not a real-market figure. |
+| Grouped scoring | `BREAKOUT` is folded into `TRENDING_UP`. Strict scoring is ~5–7 percentage points lower. |
 
-That sentence is loaded. Each clause matters:
+## Synthetic battery
 
-- **~76%** — not a single number. The benchmark uses 5 seeds per scenario across 6 scenario families, so individual runs may produce 73-78%. The 70% target is set as a regression test floor, not a precision claim.
-- **synthetic battery** — generated processes with **known per-bar labels**. This is not the same as real-market accuracy; see "Real markets" below.
-- **grouped scoring** — `BREAKOUT` is folded into `TRENDING_UP` for the headline. A high-vol upward jump is functionally the same regime as a strong uptrend from a portfolio-management perspective. Strict scoring (no grouping) lands around 5-7 percentage points lower.
+Six families, 5 seeds each, 1008 bars per series (~4 years daily), ~1110 walk-forward windows in total.
 
-## What's in the synthetic battery
-
-Six families, 5 seeds each, 1008 bars each (~4 years daily), totalling ~1110 walk-forward windows:
-
-| Family | Generator | Parameters | Expected label |
+| Family | Generator | Parameters | Label |
 |---|---|---|---|
-| `gbm_up` | GBM with positive drift | μ=0.30, σ=0.15 | TRENDING_UP |
-| `gbm_down` | GBM with negative drift | μ=-0.30, σ=0.15 | TRENDING_DOWN |
+| `gbm_up` | GBM, positive drift | μ=0.30, σ=0.15 | TRENDING_UP |
+| `gbm_down` | GBM, negative drift | μ=−0.30, σ=0.15 | TRENDING_DOWN |
 | `ou_meanrev` | Ornstein-Uhlenbeck on log-price | θ=15, σ=0.25 | MEAN_REVERTING |
-| `high_vol_chop` | High-vol zero-drift RW | σ=0.50 | HIGH_VOL_CHOP |
-| `low_vol_grind` | Low-vol low-drift GBM | μ=0.06, σ=0.06 | LOW_VOL_GRIND |
-| `regime_switching` | Stitched: gbm_up + chop + ou | mixed | varies per bar |
+| `high_vol_chop` | Zero-drift random walk | σ=0.50 | HIGH_VOL_CHOP |
+| `low_vol_grind` | Low-drift GBM | μ=0.06, σ=0.06 | LOW_VOL_GRIND |
+| `regime_switching` | gbm_up + chop + ou, stitched | mixed | per bar |
 
-The parameters are chosen so each regime is **statistically distinguishable** from a random walk over the analysis window. Weaker parameters would not be testing the detector — they would be testing whether signal exceeds noise, which it doesn't statistically for weak regimes regardless of method.
+Parameters are set so each regime is statistically distinguishable from a random walk over the analysis window.
 
 ## Walk-forward protocol
 
-For each series:
-
 1. Start at bar `window = 252`.
-2. Run `detect_regime` on bars `[end - window, end]`.
-3. Compare the predicted label at the right edge against the **true** label at that bar.
-4. Advance `end` by `step = 21` (one month) and repeat.
+2. Run `detect_regime` on bars `[end − window, end]`.
+3. Compare the predicted label with the true label at bar `end`.
+4. Advance `end` by `step = 21` and repeat.
 
-This gives ~36 predictions per 1008-bar series, ~1000+ total windows in the battery.
+Yields ~36 predictions per series.
 
 ## Per-family accuracy (representative run)
 
@@ -49,69 +45,54 @@ ou_meanrev           80%
 regime_switching     53%
 ```
 
-Notes:
+- `high_vol_chop`: highest accuracy; vol far exceeds the historical norm.
+- `regime_switching`: lowest by design. A 252-bar window straddles a regime boundary in roughly one third of windows.
+- `gbm_up` vs `gbm_down`: at σ=0.15, positive-drift GBM produces near-zero-Sharpe local windows more often than negative-drift GBM, due to compounding asymmetry.
 
-- `high_vol_chop` is the easiest (annualised vol >> historical norm is unmissable).
-- `regime_switching` is intentionally hard. The stitched series transitions between three regimes; a 252-bar window straddles a regime boundary about a third of the time, and ground truth at the right edge changes faster than our window can update.
-- `gbm_up` is weaker than `gbm_down` because positive drift with σ=0.15 produces local windows with Sharpe near zero more often than negative-drift windows (due to compounding asymmetry of geometric Brownian motion).
+## Real-market evaluation
 
-## Real markets — what to measure
+No real-market accuracy figure is published. Real-market ground truth requires a labelling rule, and any such rule is itself a modelling choice. Candidate rules:
 
-There is **no canonical accuracy number for real markets**, because ground truth requires a labelling rule, and any such rule is itself a modelling choice. Reasonable rules include:
+- **Forward-vol percentile** — percentile of forward 21-day realised vol; top 20% = `HIGH_VOL_CHOP`.
+- **Drawdown depth** — drawdown from rolling 252-day peak.
+- **Trend strength** — Sharpe of forward 63 bars.
 
-- **Forward-vol percentile** — label each bar by the percentile of its forward-21-day realized vol relative to history; "HIGH_VOL_CHOP" = top 20%.
-- **Drawdown depth** — label by current drawdown from rolling-252-day peak.
-- **Trend strength** — label by Sharpe of forward 63 bars.
-
-The package exposes `walk_forward()` so you can plug in any labelling rule and measure honestly on your own data. The shipped synthetic harness is a controlled environment; the real-world story is whatever you measure with your rule.
-
-What we **deliberately don't do**: publish a single real-markets accuracy number. Doing so would require defending a particular labelling rule as canonical, and any such defence would be unsupportable.
+`walk_forward()` accepts any labelling rule and any dataset.
 
 ## Running the benchmark
 
 ```bash
-# Headline test (~80 seconds)
+# Regression test (~80 s)
 uv run pytest tests/test_benchmark_accuracy.py -v -s
 
-# Or via the CLI:
+# CLI
 uv run regime eval
-
-# Strict scoring (no BREAKOUT → TRENDING_UP folding)
 uv run regime eval --strict
-
-# Custom config
 uv run regime eval --window 252 --step 21 --edmd-rank 10 --hmm-states 3
+uv run regime eval --plot      # confusion-matrix PNG to artifacts/
 ```
-
-The `eval` CLI also writes a confusion-matrix PNG to `artifacts/` when given `--plot`.
 
 ## Reproducibility
 
-Synthetic generators use `numpy.random.default_rng(seed)`. The default seeds are `0..4` per scenario. Re-running with the same seeds reproduces the headline number to within a few decimal places (HMM EM has minor non-determinism from internal initialisation).
+Generators use `numpy.random.default_rng(seed)` with seeds `0..4` per scenario. Results reproduce to within a few decimal places; residual variance comes from HMM EM initialisation.
 
-## What a regression looks like
+## Regression diagnosis
 
-If the benchmark accuracy drops below 70%, the test fails. Common causes:
+The benchmark test fails below 70%. Common causes:
 
-- A change to observable defaults that affects EDMD spectrum sensitivity.
-- A change to HMM covariance handling that affects state labelling.
-- A change to rule thresholds without verifying on the full battery.
+- Changes to observable defaults affecting EDMD spectrum sensitivity.
+- Changes to HMM covariance handling affecting state labelling.
+- Changes to rule thresholds not validated on the full battery.
 
 Investigation order:
 
-1. Run `pytest tests/test_regime.py` — does any single-scenario unit test fail? That points at a specific case.
-2. Run `pytest tests/test_observables.py tests/test_edmd.py` — has the math layer regressed?
-3. Run `regime eval --strict` to see if the issue is in grouped scoring vs. underlying logic.
-4. Look at the confusion matrix — where is the error concentrated?
+1. `pytest tests/test_regime.py` — isolate a failing scenario.
+2. `pytest tests/test_observables.py tests/test_edmd.py` — check the math layer.
+3. `regime eval --strict` — separate grouped-scoring effects from core logic.
+4. Inspect the confusion matrix for concentrated errors.
 
-## Honesty in headlines
+## Reporting results
 
-When you publish results, prefer:
+Report accuracy with its qualifiers, e.g.:
 
-> "RegimeRadar attains 75-78% accuracy on a synthetic battery of GBM, OU, high-vol-chop, low-vol-grind, and regime-switching scenarios under walk-forward evaluation with grouped scoring."
-
-over:
-
-> "RegimeRadar achieves 76% accuracy."
-
-The first is a claim; the second is marketing. The package supports the first; it does not support the second.
+> RegimeRadar attains 75–78% accuracy on a synthetic battery of GBM, OU, high-vol-chop, low-vol-grind, and regime-switching scenarios under walk-forward evaluation with grouped scoring.
