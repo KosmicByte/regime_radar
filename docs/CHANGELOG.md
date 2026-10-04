@@ -1,181 +1,102 @@
 # Changelog
 
-All notable changes to RegimeRadar are recorded here. Entries are keyed to the
-**detection-logic version** (`regime_radar.version.MODEL_VERSION`), which is bumped whenever
-a change can alter the label produced for an identical input. This is deliberately separate
-from the package/distribution version in `pyproject.toml`.
+Entries are keyed to the detection-logic version (`regime_radar.version.MODEL_VERSION`), which is bumped when a change can alter the label for an identical input. This is independent of the package version in `pyproject.toml`.
 
-The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
+Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
 ## [Unreleased] — branch `regime-radar-hardening`
 
-The enterprise-hardening track. Goal: make RegimeRadar trustworthy enough to be load-bearing
-for the wider ecosystem before adding new modelling capability.
+Hardening track: reliability, reproducibility, and measurement before new modelling capability.
 
-### R2 (part 2) — Benchmark confidence intervals & the HMM-dampening A/B
+### R2 (part 2) — Benchmark confidence intervals and HMM-dampening A/B
 
-No `MODEL_VERSION` change: still pure measurement. R2 is now complete.
+No `MODEL_VERSION` change (measurement only). Completes R2.
 
 **Added**
-- `eval/metrics.py` — `BenchmarkResult` gains `accuracy_ci()` (bootstrap over *scenarios*, not
-  windows, since windows are autocorrelated), `stability_summary()` (whipsaw / dwell over the
-  predicted sequences), and `macro_f1()` (equal-weighted across regimes, plus per-regime F1).
-- `eval/metrics.py` — `ab_dampening()` + `ABResult`: runs the benchmark twice on the *same*
-  battery with the HMM-dampening ladder on vs off, and a **paired** bootstrap on the
-  per-scenario delta (the arms share scenarios, so a paired test is the correct one).
-- `core/regime.py`, `eval/walk_forward.py`, `eval/metrics.py` — a `raw_hmm_dampening`
-  override threaded through so the A/B can toggle the ladder without mutating global settings.
-- `cli/eval.py` — the headline now prints a 95% CI, macro-F1, and label stability; new
-  `--ab-dampening` flag runs and reports the A/B with a retire/keep verdict.
+- `eval/metrics.py` — `BenchmarkResult.accuracy_ci()` (bootstrap over scenarios, as windows are autocorrelated), `stability_summary()` (whipsaw, dwell), `macro_f1()` (equal-weighted, plus per-regime F1).
+- `eval/metrics.py` — `ab_dampening()` and `ABResult`: benchmark run on the same battery with the HMM-dampening ladder on and off; paired bootstrap on the per-scenario delta.
+- `core/regime.py`, `eval/walk_forward.py`, `eval/metrics.py` — `raw_hmm_dampening` override, allowing the A/B to toggle the ladder without changing global settings.
+- `cli/eval.py` — headline output includes 95% CI, macro-F1, and label stability. New `--ab-dampening` flag reports the A/B with a retire/keep verdict.
 - `tests/test_r2_eval_rigor.py` — 5 tests.
 
-**Finding (HMM-dampening A/B)**
-- On the synthetic battery the ladder changes HMM *confidence* (≈15 of 51 windows on a
-  switching series) but **never flips the final ensemble label**, so accuracy delta is exactly
-  0.0%. The synthetic evidence can neither justify nor condemn the ladder.
-- **Decision: keep `raw_hmm_dampening=True` (unchanged).** The ladder targets specific
-  real-data disagreement cases the synthetic battery does not reproduce; retiring it on a
-  zero-effect synthetic result would be unjustified. The A/B harness now exists to make this
-  call on real labelled data once it is wired in.
+**Finding**
+- On the synthetic battery, the ladder alters HMM confidence (~15 of 51 windows on a switching series) but never the final ensemble label. Accuracy delta: 0.0%.
+- Decision: `raw_hmm_dampening=True` retained. The ladder targets real-data disagreement cases not reproduced by the synthetic battery. Retirement decision deferred to real labelled data.
 
-**Refined**
-- The `--ab-dampening` verdict now distinguishes *untested* from *retire*: it reports a
-  `label_divergence` (how often ON/OFF labels differ) and, when the ladder changed no labels
-  on the battery, says so plainly ("untested here — keep it on, decide on real data") rather
-  than reading a zero-effect result as a green light to retire.
+**Changed**
+- `--ab-dampening` verdict reports `label_divergence` (fraction of windows where ON/OFF labels differ). When no labels change, the verdict is "untested" rather than "retire".
 
-**Cleanup**
-- Removed a pre-existing unused import (`breakout_jump`) from `eval/metrics.py`.
+**Removed**
+- Unused import `breakout_jump` from `eval/metrics.py`.
 
-### R2 (part 1) — Economic validation, stability & confidence intervals
+### R2 (part 1) — Economic validation, stability, and confidence intervals
 
-No `MODEL_VERSION` change: R2 is pure measurement and adds no detection-logic change — it does
-not alter `detect_regime` output. It answers a different question from accuracy: *does trading
-the regime have an edge?*
+No `MODEL_VERSION` change (measurement only; `detect_regime` output unaffected). Tests whether trading the regime has an edge.
 
 **Added**
-- `eval/economic.py` — walk-forward, point-in-time regime backtest with a transparent
-  regime→position map and transaction costs, plus `evaluate_economic`: Sharpe vs buy-and-hold,
-  max drawdown, turnover, and a **shuffled-regime permutation test** (circular-shift null) that
-  isolates timing skill from the base position mix. Validated: detects significant edge on a
-  switching series (p≈0.03), correctly finds none on a pure trend (≈ buy-hold) or on chop
-  (stays flat).
-- `eval/uncertainty.py` — Wilson interval for proportions and a percentile bootstrap, so
-  headline metrics ship as "76% [72, 80]" rather than a bare point estimate.
-- `eval/stability.py` — whipsaw rate, mean/max dwell, switch count: the steadiness of the
-  label sequence, since every flip costs money under the cost model.
-- `cli/backtest.py` — `regime backtest --symbol GAIL.NS`: runs the economic validation on a
-  real symbol and reports edge, the permutation p-value, and stability — decision *evidence*,
-  explicitly not a recommendation or signal, with a not-financial-advice caveat. Registered in
-  `__main__.py`.
-- `tests/test_r2_evaluation.py` — 9 tests, anchored by the "beats null when timing matters /
-  doesn't when it doesn't" pair.
-- `tests/test_r2_evaluation.py` also asserts a missing close (real-feed gap) cannot NaN the
-  summary (`test_gap_in_close_does_not_poison_stats`).
+- `eval/economic.py` — walk-forward, point-in-time regime backtest with a fixed regime→position map and transaction costs. `evaluate_economic` reports Sharpe vs buy-and-hold, max drawdown, turnover, and a shuffled-regime permutation test (circular-shift null) isolating timing skill from position mix. Validation: significant edge on a switching series (p≈0.03); none on pure trend or chop.
+- `eval/uncertainty.py` — Wilson interval and percentile bootstrap for headline metrics (e.g. "76% [72, 80]").
+- `eval/stability.py` — whipsaw rate, mean/max dwell, switch count.
+- `cli/backtest.py` — `regime backtest --symbol <ticker>`: edge, permutation p-value, and stability on a real symbol, with a not-financial-advice notice. Registered in `__main__.py`.
+- `tests/test_r2_evaluation.py` — 9 tests, including null-beating on timing-sensitive series and `test_gap_in_close_does_not_poison_stats`.
 
 **Fixed**
-- `eval/economic.py` — a single NaN/missing close (observed on GAIL.NS via yfinance) poisoned
-  `mean()`/`std()` and turned the whole performance table NaN. Closes are now forward-filled
-  (point-in-time safe) before any computation, returns are sanitised to finite, and `_sharpe`
-  guards non-finite results.
+- `eval/economic.py` — a single missing close (observed on GAIL.NS via yfinance) produced NaN across all performance metrics. Closes are now forward-filled (point-in-time safe), returns are sanitised to finite values, and `_sharpe` guards non-finite results.
 
-**Still to come in R2**
-- Fold the bootstrap CIs and stability metrics into the `regime eval` benchmark output.
-- The `raw_hmm_dampening` on/off A/B against calibration, to decide whether to retire the
-  hand-tuned HMM ladder.
-
-### MODEL_VERSION 1.1.1 — R1 fix: robust OOD scoring
+### MODEL_VERSION 1.1.1 — R1 fix: OOD scoring
 
 **Fixed**
-- `calibration/ood.py` — `ood_score` could return `NaN` when a detection's feature vector
-  contained a non-finite value (observed on a real-market symbol whose window had a flat,
-  zero-variance stretch, making a Sharpe-/gap-style feature divide by zero). The score now
-  imputes any non-finite feature to the reference mean (neutral contribution), clamps the
-  squared Mahalanobis distance non-negative, and falls back to 0.0 if anything is still
-  non-finite — so a detection can never emit a `NaN` OOD score. Added regression tests.
+- `calibration/ood.py` — `ood_score` returned `NaN` when the feature vector contained a non-finite value (e.g. zero-variance windows on real data). Non-finite features are now imputed to the reference mean, the squared Mahalanobis distance is clamped non-negative, and the score falls back to 0.0 if still non-finite. Regression tests added.
 
-### MODEL_VERSION 1.1.0 — R1: calibration & uncertainty
+### MODEL_VERSION 1.1.0 — R1: Calibration and uncertainty
 
 **Added**
 - `calibration/` package:
-  - `artifact.py` — `CalibrationArtifact`, a versioned JSON bundle (temperature, conformal
-    threshold, OOD reference) that records its `fit_source` and `model_version`.
-  - `calibrator.py` — temperature scaling. `softmax(log p / T)` preserves the argmax, so
-    calibration corrects confidence without ever changing the label.
-  - `conformal.py` — split-conformal prediction sets with a distribution-free coverage
-    guarantee at `1 - alpha`; never returns an empty set.
-  - `ood.py` — Mahalanobis out-of-distribution score in [0, 1], from a feature vector derived
-    entirely from the `RegimeResult` (no recomputation).
-  - `fit.py` — harvests detections across the synthetic battery (with calibration off) and
-    fits the full artifact; returns before/after diagnostics.
+  - `artifact.py` — `CalibrationArtifact`: versioned JSON bundle (temperature, conformal threshold, OOD reference) recording `fit_source` and `model_version`.
+  - `calibrator.py` — temperature scaling; preserves the argmax.
+  - `conformal.py` — split-conformal prediction sets with coverage at `1 − alpha`; never empty.
+  - `ood.py` — Mahalanobis OOD score in `[0, 1]` from `RegimeResult` features.
+  - `fit.py` — harvests detections across the synthetic battery (calibration off) and fits the artifact; returns before/after diagnostics.
 - `eval/calibration_metrics.py` — ECE, Brier, reliability curve, empirical coverage.
-- `cli/calibrate.py` — `regime calibrate`: fit + persist the artifact and print calibration
-  quality. Registered in `__main__.py`.
-- `tests/test_r1_calibration.py` — 9 tests, including label-preservation and held-out
-  conformal coverage.
+- `cli/calibrate.py` — `regime calibrate`: fit, persist, and report calibration quality. Registered in `__main__.py`.
+- `tests/test_r1_calibration.py` — 9 tests, including label preservation and held-out conformal coverage.
 
 **Changed**
-- `models.py` — `RegimeResult` gains `calibrated`, `calibrator_version`, `prediction_set`,
-  `coverage_level`, `ood_score`, `in_distribution` (all defaulted so behaviour is unchanged
-  when no artifact is present). The `confidence` docstring is now accurate.
-- `core/regime.py` — `detect_regime` gains a `calibrate` flag; applies the artifact (when
-  present and enabled) via a cached loader; the hand-tuned HMM dampening ladder is now gated
-  behind the `raw_hmm_dampening` setting (default on).
+- `models.py` — `RegimeResult` adds `calibrated`, `calibrator_version`, `prediction_set`, `coverage_level`, `ood_score`, `in_distribution` (all defaulted). `confidence` docstring corrected.
+- `core/regime.py` — `detect_regime` adds a `calibrate` flag and applies the artifact via a cached loader. HMM dampening ladder gated behind `raw_hmm_dampening` (default on).
 - `config.py` — adds `calibration_enabled`, `calibration_artifact`, `raw_hmm_dampening`.
 
 **Notes**
-- Calibration is additive: with no artifact, output is identical to R0. Temperature scaling
-  preserves the argmax, so **label accuracy is unchanged** — only confidence quality improves.
-  On the synthetic harvest, ECE dropped ~0.21 → ~0.10–0.14 and conformal coverage hit the 90%
-  target.
-- The artifact is **fit on synthetic data** and marked `fit_source="synthetic"`; coverage and
-  OOD thresholds are indicative until re-fit on real data (a one-command refresh).
-- `MODEL_VERSION` → 1.1.0: a minor bump for additive, label-preserving output changes.
+- Additive: without an artifact, output is identical to R0. Label accuracy is unchanged.
+- Synthetic harvest: ECE ~0.21 → ~0.10–0.14; conformal coverage at the 90% target.
+- Artifact is fit on synthetic data (`fit_source="synthetic"`); coverage and OOD thresholds are indicative until re-fit on real data.
+- Minor version bump: additive, label-preserving output changes.
 
-### MODEL_VERSION 1.0.0 — R0: point-in-time contract & reproducible inference
+### MODEL_VERSION 1.0.0 — R0: Point-in-time contract and reproducible inference
 
 **Added**
-- `core/contract.py` — `PointInTimeFrame`, the sanctioned input to detection. Truncates
-  every input to an `as_of` instant at construction; no API can return a bar dated after it.
-  Constructors `from_dataframe` (consumes `data.load` output) and `from_arrays`. Helpers
-  `tail(n)` (point-in-time-safe windowing) and `input_hash()` (stable SHA-256 of inputs).
-  Reserves a `with_exogenous` hook for future macro / cross-asset features with `known_at`
-  publication-lag semantics.
-- `version.py` — `MODEL_VERSION` (detection-logic semver) and `code_version()` (git SHA with
-  `+dirty` marker, falling back to package version).
-- `provenance.py` — `InferenceRecord` plus append-only JSONL `write_record` / `read_records`.
-  Opt-in via `provenance_enabled`; best-effort so it can never break a detection.
-- `tests/test_r0_contract.py` — 14 tests including `test_future_bars_do_not_leak`, the
-  guarantee that appending future bars cannot change a past-dated decision.
+- `core/contract.py` — `PointInTimeFrame`: truncates inputs to `as_of` at construction. Constructors `from_dataframe`, `from_arrays`; helpers `tail(n)`, `input_hash()`. Reserved `with_exogenous` hook for features with `known_at` semantics.
+- `version.py` — `MODEL_VERSION` and `code_version()` (git SHA with `+dirty`, falling back to package version).
+- `provenance.py` — `InferenceRecord` and append-only JSONL `write_record` / `read_records`. Opt-in via `provenance_enabled`; failures never break detection.
+- `tests/test_r0_contract.py` — 14 tests, including `test_future_bars_do_not_leak`.
 
 **Changed**
-- `models.py` — `RegimeResult` gains `model_version`, `code_version`, and `input_hash`
-  (all default to `""` so existing construction and deserialisation keep working).
-- `core/regime.py` — `detect_regime` now resolves a `PointInTimeFrame` (accepts `frame=`
-  directly, or builds one from `close=`); `as_of` and `input_hash` come from the frame;
-  results are stamped with the version fields; emits an `InferenceRecord` when enabled.
-  The legacy `close=`/`timestamps=` signature still works.
-- `eval/walk_forward.py` — each window is wrapped in a `PointInTimeFrame` and passed via
-  `frame=`, with an assertion that no bar beyond the window end is visible.
-- `config.py` — adds `provenance_enabled` and `provenance_dir` settings (env-prefixed
-  `REGIME_`).
+- `models.py` — `RegimeResult` adds `model_version`, `code_version`, `input_hash` (default `""`).
+- `core/regime.py` — `detect_regime` resolves a `PointInTimeFrame` (`frame=` or built from `close=`); `as_of` and `input_hash` taken from the frame; results stamped with version fields; emits `InferenceRecord` when enabled. Legacy `close=`/`timestamps=` signature retained.
+- `eval/walk_forward.py` — each window wrapped in a `PointInTimeFrame`, with an assertion that no bar beyond the window end is visible.
+- `config.py` — adds `provenance_enabled`, `provenance_dir` (`REGIME_` prefix).
 
 **Notes**
-- No change to detection logic, so synthetic-benchmark accuracy is unchanged (≈75–78%,
-  walk-forward, grouped). Despite that, `MODEL_VERSION` starts at 1.0.0 to mark the first
-  versioned, reproducible baseline; future detection changes increment from here.
-- Backward compatible: all prior call sites and the full pre-existing test suite pass
-  unchanged (44/44 total with the new R0 tests).
+- No detection-logic change; synthetic accuracy unchanged (~75–78%, walk-forward, grouped).
+- `MODEL_VERSION` 1.0.0 marks the first versioned, reproducible baseline.
+- Backward compatible: 44/44 tests pass.
 
 ---
 
-## Upcoming (planned on this branch)
+## Planned
 
-- **R2.5 — Exogenous features:** macro / cross-asset conditioning features via the
-  `with_exogenous` hook, with strict `known_at` point-in-time discipline.
+- **R2.5 — Exogenous features**: macro and cross-asset features via `with_exogenous`, with `known_at` point-in-time discipline.
 
-Capability work (HSMM, regime forecasting, BOCPD, learned weights, governance/API) continues
-on the `regime-radar-forecasting` branch. The HMM-dampening ladder retirement decision is
-deferred until the A/B can be run on real labelled data.
+Capability work (HSMM, regime forecasting, BOCPD, learned weights, governance/API) continues on branch `regime-radar-forecasting`. HMM-dampening retirement is deferred until the A/B runs on real labelled data.

@@ -1,8 +1,6 @@
 # CLI Reference
 
-Every command, flag, and named watchlist available in RegimeRadar.
-
-The CLI is exposed as `regime` after `uv sync` or `pip install -e .`.
+The CLI is installed as `regime` via `uv sync` or `pip install -e .`.
 
 ```bash
 uv run regime --help
@@ -12,29 +10,29 @@ uv run regime --help
 
 | Command | Purpose |
 |---|---|
-| [`regime detect`](#regime-detect) | Full ensemble + transition risk for one symbol |
+| [`regime detect`](#regime-detect) | Full ensemble and transition risk for one symbol |
 | [`regime explain`](#regime-explain) | Eigenvalue table and voter contributions |
-| [`regime scan`](#regime-scan) | Watchlist scan with sector groupings |
-| [`regime plot`](#regime-plot) | Spectrum and price-with-regime PNG output |
+| [`regime scan`](#regime-scan) | Watchlist scan |
+| [`regime plot`](#regime-plot) | Spectrum and price-with-regime PNGs |
 | [`regime eval`](#regime-eval) | Synthetic walk-forward benchmark |
+| [`regime calibrate`](#regime-calibrate) | Fit the calibration artifact |
+| [`regime backtest`](#regime-backtest) | Economic validation of regime timing |
 
-## Global conventions
-
-All commands accept these common flags:
+## Common flags
 
 | Flag | Short | Default | Purpose |
 |---|---|---|---|
 | `--symbol <ticker>` | `-s` | `REGIME_DEFAULT_SYMBOL` (`^NSEI`) | Yahoo-style ticker |
-| `--interval <i>` | `-i` | `REGIME_DEFAULT_INTERVAL` (`1d`) | Bar interval — `1d`, `1h`, `5m`, `15m` |
-| `--lookback <days>` | — | `720` | Calendar days of history to load |
+| `--interval <i>` | `-i` | `REGIME_DEFAULT_INTERVAL` (`1d`) | Bar interval: `1d`, `1h`, `5m`, `15m` |
+| `--lookback <days>` | — | `720` | Calendar days of history |
 | `--window <bars>` | `-w` | `REGIME_WINDOW` (`126`) | Analysis window in bars |
 
 ### Ticker conventions
 
-| Market | Suffix | Example |
+| Market | Format | Example |
 |---|---|---|
-| NSE equities | `.NS` | `RELIANCE.NS`, `TCS.NS` |
-| BSE equities | `.BO` | `RELIANCE.BO` |
+| NSE equities | `.NS` suffix | `RELIANCE.NS`, `TCS.NS` |
+| BSE equities | `.BO` suffix | `RELIANCE.BO` |
 | NSE indices | `^` prefix | `^NSEI` (NIFTY 50), `^NSEBANK` (Bank Nifty) |
 | US equities | none | `AAPL`, `MSFT` |
 
@@ -42,7 +40,7 @@ All commands accept these common flags:
 
 ## `regime detect`
 
-Runs the full three-voter ensemble plus transition-risk scoring and prints a Rich panel.
+Runs the three-voter ensemble and transition-risk scoring.
 
 ```bash
 uv run regime detect --symbol RELIANCE.NS
@@ -50,87 +48,77 @@ uv run regime detect --symbol ^NSEI --window 252
 uv run regime detect --symbol HDFCBANK.NS --json
 ```
 
-### Flags
-
 | Flag | Default | Purpose |
 |---|---|---|
 | `--symbol`, `-s` | `^NSEI` | Ticker |
 | `--interval`, `-i` | `1d` | Bar interval |
-| `--lookback` | `720` | Calendar days to load |
+| `--lookback` | `720` | Calendar days |
 | `--window`, `-w` | `126` | Analysis window in bars |
 | `--no-transition` | off | Skip transition-risk pass |
-| `--json` | off | Emit JSON instead of a Rich panel |
+| `--json` | off | JSON output |
 
-### Output
-
-A Rich panel with the regime label, confidence, probability distribution over all labels, the three reasons that produced the label (ordered by contribution), the individual votes of each method (EDMD / HMM / Rule), and the transition-risk score colour-coded by severity.
+**Output**: regime label, confidence, probability distribution, top three reasons by contribution, individual votes (EDMD / HMM / Rule), and colour-coded transition-risk score.
 
 ---
 
 ## `regime explain`
 
-Prints the full eigenvalue spectrum and the voter-contribution breakdown for the latest detection on a symbol. Use when you want to interrogate *why* a label was assigned.
+Prints the eigenvalue spectrum and voter-contribution breakdown for the latest detection.
 
 ```bash
 uv run regime explain --symbol ^NSEI
 uv run regime explain --symbol RELIANCE.NS --top-k 8
 ```
 
-### Flags
-
 | Flag | Default | Purpose |
 |---|---|---|
 | `--symbol`, `-s` | `^NSEI` | Ticker |
 | `--interval`, `-i` | `1d` | Bar interval |
-| `--lookback` | `720` | Calendar days to load |
-| `--top-k` | `5` | Number of top eigenvalues to display |
+| `--lookback` | `720` | Calendar days |
+| `--top-k` | `5` | Number of eigenvalues displayed |
 
-### Output
-
-A table of top-K Koopman eigenvalues with their magnitude, argument, growth rate, frequency, and relative energy. A second table lists the reasons that produced the label, ordered by contribution weight.
+**Output**: table of top-K Koopman eigenvalues (magnitude, argument, growth rate, frequency, relative energy); table of reasons ordered by contribution weight.
 
 ---
 
 ## `regime scan`
 
-Scans a watchlist of symbols and prints a regime + transition-risk table for each. Ships with **35 named watchlists** spanning all major NSE sectors plus group-level scans.
+Scans a watchlist and prints regime and transition risk per symbol. 35 named watchlists are included.
 
 ```bash
-uv run regime scan                                    # tight 13-name default
-uv run regime scan --watchlist banks-private          # sector
-uv run regime scan --watchlist tata                   # group
-uv run regime scan --watchlist broad --delay-ms 500   # big scan
+uv run regime scan                                             # default watchlist
+uv run regime scan --watchlist banks-private                   # sector
+uv run regime scan --watchlist tata                            # group
+uv run regime scan --watchlist broad --delay-ms 500            # large scan
 uv run regime scan --symbol HDFCBANK.NS --symbol ICICIBANK.NS  # ad-hoc
-uv run regime scan --list                             # show all watchlists
+uv run regime scan --list                                      # list watchlists
 ```
-
-### Flags
 
 | Flag | Short | Default | Purpose |
 |---|---|---|---|
-| `--symbol` | `-s` | — | Ad-hoc ticker (repeatable). Overrides `--watchlist`. |
-| `--watchlist` | `-W` | — | Name of a predefined watchlist (see below) |
-| `--list` | — | off | Print every named watchlist and exit |
+| `--symbol` | `-s` | — | Ad-hoc ticker (repeatable); overrides `--watchlist` |
+| `--watchlist` | `-W` | — | Named watchlist |
+| `--list` | — | off | Print all watchlists and exit |
 | `--interval` | `-i` | `1d` | Bar interval |
-| `--lookback` | — | `720` | Calendar days to load |
-| `--delay-ms` | — | `0` | Sleep N ms between symbols — use for big scans to avoid Yahoo rate-limits |
+| `--lookback` | — | `720` | Calendar days |
+| `--delay-ms` | — | `0` | Delay between symbols (ms) |
 
 ### Named watchlists
 
 | Name | Size | Contents |
 |---|---|---|
-| `default` | 13 | Bellwether daily scan — top 10 mega-caps + 3 indices |
-| `indices` | 19 | All Nifty sector + broad-market indices |
+| `default` | 13 | Top 10 mega-caps + 3 indices |
+| `indices` | 19 | Nifty sector and broad-market indices |
 | `banks-private` | 10 | HDFC, ICICI, Kotak, Axis, IndusInd, IDFC First, Federal, RBL, Bandhan, AU |
 | `banks-psu` | 8 | SBI, PNB, BoB, Canara, Union, Indian, BoI, IOB |
-| `financials` | 14 | NBFCs, insurance, AMCs (Bajaj Finance, Cholamandalam, SBI Life, HDFC Life, …) |
+| `financials` | 14 | NBFCs, insurance, AMCs |
 | `it` | 15 | Tier-1 and tier-2 IT services |
 | `oil-gas` | 11 | RIL, ONGC, OMCs, gas distribution |
-| `power` | 10 | Power generation + transmission + renewables |
+| `power` | 10 | Generation, transmission, renewables |
 | `fmcg` | 14 | Staples, beverages, personal care |
-| `auto-oem` | 10 | All four-wheeler and two-wheeler OEMs |
+| `auto-oem` | 10 | Four- and two-wheeler OEMs |
 | `auto-ancillary` | 10 | Tyres, components, forgings |
-| `pharma` | 18 | Generics, APIs, MNCs in India |
+| `pharma` | 18 | Generics, APIs, MNCs |
 | `healthcare` | 8 | Hospitals, diagnostics |
 | `metals` | 12 | Steel, aluminium, copper, zinc |
 | `mining` | 4 | Coal India, NMDC, MOIL, Hindzinc |
@@ -145,132 +133,103 @@ uv run regime scan --list                             # show all watchlists
 | `logistics` | 10 | Airlines, ports, freight |
 | `media` | 8 | Broadcast, print, OTT |
 | `consumer-durables` | 13 | Appliances, electronics, kitchenware |
-| `agri` | 9 | Fertilisers, agri-chem |
+| `agri` | 9 | Fertilisers, agri-chemicals |
 | `textiles` | 8 | Page, Vardhman, Trident |
-| `adani` | 9 | Adani group — highly correlated regimes |
+| `adani` | 9 | Adani group |
 | `tata` | 12 | Tata group |
-| `midcap` | 14 | High-conviction mid-caps with vol |
+| `midcap` | 14 | High-volatility mid-caps |
 | `defence` | 9 | HAL, BEL, BDL, shipyards |
-| `psu` | 20 | Cross-sector PSU pulse |
-| `global` | 12 | US mega-caps + Indian ADRs |
-| `broad` | 69 | Composite of sector heads — broadest practical scan |
+| `psu` | 20 | Cross-sector PSUs |
+| `global` | 12 | US mega-caps and Indian ADRs |
+| `broad` | 69 | Composite of sector leaders |
 
-Run `regime scan --list` for the complete contents of each watchlist.
+Full contents: `regime scan --list`.
 
-### Output
+**Output**: one row per symbol — regime label, confidence, annualised vol, trend Sharpe, colour-coded transition-risk score, note.
 
-A table with one row per symbol: regime label, confidence, annualised vol, trend Sharpe, transition-risk score (colour-coded green / yellow / red by severity), and a one-line note.
-
-### Rate limits
-
-Yahoo throttles burst requests. For scans over ~20 symbols, use `--delay-ms 500`. The `broad`, `psu`, and `pharma` watchlists in particular benefit from this. Once MarketLake is the data source, rate-limiting stops being a concern.
+**Rate limits**: Yahoo throttles burst requests. Use `--delay-ms 500` for scans above ~20 symbols (notably `broad`, `psu`, `pharma`). Not required when MarketLake is the data source.
 
 ---
 
 ## `regime plot`
 
-Emits two PNGs to the artifacts directory: the Koopman eigenvalue spectrum on the complex plane, and the price chart annotated with the current regime label.
+Writes two PNGs to the artifacts directory.
 
 ```bash
 uv run regime plot --symbol ^NSEBANK
 uv run regime plot --symbol RELIANCE.NS --out-dir plots/
 ```
 
-### Flags
-
 | Flag | Default | Purpose |
 |---|---|---|
 | `--symbol`, `-s` | `^NSEI` | Ticker |
 | `--interval`, `-i` | `1d` | Bar interval |
-| `--lookback` | `720` | Calendar days to load |
+| `--lookback` | `720` | Calendar days |
 | `--out-dir` | `REGIME_ARTIFACTS_DIR` (`./artifacts`) | Output directory |
 
-### Output
-
-Two files in `<out-dir>`:
-- `<symbol>_spectrum.png` — eigenvalues plotted on the complex plane with the unit circle for reference
-- `<symbol>_price_regime.png` — price chart annotated with the regime label, confidence, and top reason
+**Output**:
+- `<symbol>_spectrum.png` — eigenvalues on the complex plane with unit circle
+- `<symbol>_price_regime.png` — price chart annotated with regime label, confidence, and top reason
 
 ---
 
 ## `regime eval`
 
-Runs the synthetic walk-forward benchmark and prints per-scenario accuracy plus an overall confusion matrix. This is the headline 70% accuracy gate.
+Runs the synthetic walk-forward benchmark (70% accuracy gate).
 
 ```bash
 uv run regime eval
-uv run regime eval --strict                  # disable BREAKOUT → TRENDING_UP grouping
-uv run regime eval --window 252 --plot       # custom window + write confusion PNG
+uv run regime eval --strict
+uv run regime eval --window 252 --plot
+uv run regime eval --ab-dampening
 ```
-
-### Flags
 
 | Flag | Default | Purpose |
 |---|---|---|
 | `--window`, `-w` | `126` | Analysis window in bars |
-| `--step` | `21` | Stride between successive walk-forward fits |
-| `--edmd-rank` | `10` | SVD truncation rank for EDMD |
+| `--step` | `21` | Stride between walk-forward fits |
+| `--edmd-rank` | `10` | EDMD SVD truncation rank |
 | `--hmm-states` | `3` | HMM state count |
-| `--grouped` / `--strict` | grouped | Grouped mode folds BREAKOUT into TRENDING_UP for less-strict scoring |
-| `--plot` | off | Write a confusion-matrix PNG to artifacts dir |
-| `--ab-dampening` | off | A/B the hand-tuned HMM dampening ladder (on vs off) and report the delta with CIs |
+| `--grouped` / `--strict` | grouped | Grouped folds BREAKOUT into TRENDING_UP |
+| `--plot` | off | Write confusion-matrix PNG |
+| `--ab-dampening` | off | A/B test of the HMM dampening ladder (on vs off) |
 
-### Output
+**Output**: per-scenario accuracy; overall accuracy with 95% bootstrap CI (resampled over scenarios); macro-F1; label stability (whipsaw rate, mean dwell); confusion matrix.
 
-A per-scenario accuracy table, then a headline panel with overall accuracy **and a 95% bootstrap confidence interval** (resampling scenarios, not windows), macro-F1, and label-stability (whipsaw rate, mean dwell), followed by a confusion matrix.
+**`--ab-dampening` output**: accuracy with CI for each arm, paired delta with CI, label divergence, and a retire/keep verdict. On synthetic data the ladder changes confidence but not labels; the verdict is reported as untested.
 
-With `--ab-dampening`, instead runs the benchmark twice on the same battery — HMM dampening ladder on vs off — and reports both accuracies with CIs, the **paired** delta with its CI, and a retire/keep verdict for the hand-tuned heuristics. (On synthetic data the ladder changes confidence but not labels, so the decision to retire it is deferred to real-data evaluation.)
-
-Expected runtime: ~80 seconds for the default battery (30 series × ~36 walk-forward windows each).
-
-See [`docs/evaluation.md`](evaluation.md) for the full methodology and accuracy framing.
+**Runtime**: ~80 s (30 series × ~36 walk-forward windows). Methodology: [`docs/evaluation.md`](evaluation.md).
 
 ---
 
 ## `regime calibrate`
 
-Fits the calibration artifact — temperature scaling, the conformal threshold, and the
-out-of-distribution reference — by harvesting detections across the synthetic battery, then
-writes it to the configured artifact path. Once present, every `detect`/`scan` run uses it
-automatically to produce calibrated confidence, a conformal prediction set, and an OOD score.
+Fits the calibration artifact (temperature, conformal threshold, OOD reference) from detections harvested across the synthetic battery. Once present, `detect` and `scan` apply it automatically.
 
 ```bash
-uv run regime calibrate                       # fit + write artifacts/calibration.json
-uv run regime calibrate --alpha 0.05          # target 95% conformal coverage
+uv run regime calibrate
+uv run regime calibrate --alpha 0.05
 uv run regime calibrate --step 42 --out ./artifacts/calibration.json
 ```
 
-### Flags
-
 | Flag | Default | Purpose |
 |---|---|---|
-| `--window`, `-w` | `252` | Walk-forward window used during harvesting |
+| `--window`, `-w` | `252` | Walk-forward window for harvesting |
 | `--step` | `21` | Stride between harvested windows |
-| `--edmd-rank` | `10` | SVD truncation rank for EDMD |
+| `--edmd-rank` | `10` | EDMD SVD truncation rank |
 | `--hmm-states` | `3` | HMM state count |
-| `--alpha` | `0.1` | Miscoverage rate; conformal coverage target is `1 - alpha` |
+| `--alpha` | `0.1` | Miscoverage rate; coverage target is `1 − alpha` |
 | `--out`, `-o` | from settings | Artifact output path |
 
-### Output
+**Output**: before/after ECE and Brier; fitted temperature; empirical conformal coverage vs target; OOD flag rate; sample count. A notice states that thresholds are indicative while the fit source is synthetic.
 
-A before/after calibration-quality table (ECE and Brier), then a summary with the fitted
-temperature, empirical conformal coverage vs target, OOD flag rate, and the harvested sample
-count. Because the fit is currently on synthetic data, the command prints a note that coverage
-and OOD thresholds are indicative rather than real-market guarantees — re-run on real data once
-it is wired in to refresh the artifact (no code change required).
-
-> Temperature scaling preserves the argmax, so calibration never changes the regime label —
-> only how honest the confidence is. Running `calibrate` therefore cannot regress accuracy.
+Temperature scaling preserves the argmax; calibration does not change labels or accuracy.
 
 ---
 
 ## `regime backtest`
 
-Tests whether trading a symbol's regime has an edge. Walks the detector over the symbol's
-price history (point-in-time, no look-ahead), realises a transparent regime→position strategy
-with transaction costs, and tests it against a **shuffled-regime null** — a circular-shift
-permutation that preserves the position mix but destroys its timing alignment. The p-value is
-the fraction of the null at least as good as the real strategy.
+Tests whether a symbol's regime sequence has tradeable timing. Walks the detector over history (point-in-time), applies a fixed regime→position map with transaction costs, and compares against a shuffled-regime null (circular-shift permutation preserving position mix). The p-value is the fraction of null draws performing at least as well.
 
 ```bash
 uv run regime backtest --symbol GAIL.NS
@@ -278,68 +237,57 @@ uv run regime backtest --symbol ^NSEI --lookback 1825 --cost-bps 3
 uv run regime backtest --symbol RELIANCE.NS --window 252 --stride 10
 ```
 
-### Flags
-
 | Flag | Default | Purpose |
 |---|---|---|
-| `--symbol`, `-s` | from settings | Ticker (e.g. `GAIL.NS`, `^NSEI`) |
+| `--symbol`, `-s` | from settings | Ticker |
 | `--interval`, `-i` | `1d` | Bar interval |
-| `--lookback` | `1460` | History to pull (days) |
-| `--window`, `-w` | `126` | Detection window (bars) |
+| `--lookback` | `1460` | Calendar days |
+| `--window`, `-w` | `126` | Detection window in bars |
 | `--stride` | `5` | Bars between regime recomputes |
-| `--cost-bps` | `5.0` | Transaction cost charged per unit position change |
-| `--permutations` | `1000` | Shuffled-regime null draws |
+| `--cost-bps` | `5.0` | Cost per unit position change (bps) |
+| `--permutations` | `1000` | Null draws |
 
-### Output
+**Output**: annualised return, Sharpe, and max drawdown for regime strategy vs buy-and-hold; permutation p-value and verdict; label stability; position map.
 
-A performance table (annualised return, Sharpe, max drawdown) for the regime strategy vs
-buy-and-hold, then an edge-test panel with the permutation p-value and verdict, label-stability
-(whipsaw rate, mean dwell), and the position map used.
+**Default position map**: trending up → long; trending down → short; chop / mean-reversion → flat.
 
-> **This is decision evidence, not a signal or recommendation, and not financial advice.** A
-> positive historical result does not guarantee future performance. The default position map
-> (trending → long, down → short, chop/mean-reversion → flat) is deliberately simple and
-> transparent; it is the *gate test* for whether a regime has tradeable timing, not a complete
-> strategy.
+> Output is validation evidence, not a trading signal or recommendation, and not financial advice. Historical results do not guarantee future performance.
 
 ---
 
 ## Configuration
 
-CLI defaults are populated from environment variables, all namespaced `REGIME_*`. A template is provided at `.env.example`:
+Defaults are read from `REGIME_*` environment variables. Template: `.env.example`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `REGIME_DEFAULT_SYMBOL` | `^NSEI` | Default for `--symbol` |
-| `REGIME_DEFAULT_INTERVAL` | `1d` | Default for `--interval` |
-| `REGIME_WINDOW` | `126` | Default for `--window` |
-| `REGIME_ARTIFACTS_DIR` | `./artifacts` | Default for `--out-dir` on `plot` and `eval --plot` |
-| `REGIME_EDMD_RANK` | `10` | Default EDMD truncation rank |
-| `REGIME_HMM_N_STATES` | `3` | Default HMM state count |
-| `REGIME_TRANSITION_THRESHOLD` | `0.6` | Risk above this is flagged as a crossed threshold |
-| `REGIME_CALIBRATION_ENABLED` | `true` | Use the calibration artifact when one is present |
-| `REGIME_CALIBRATION_ARTIFACT` | `./artifacts/calibration.json` | Path to the fitted calibration artifact |
-| `REGIME_PROVENANCE_ENABLED` | `false` | Append an immutable inference record per detection |
-| `MARKETLAKE_DATA_DIR` | — | If set and MarketLake is importable, used in preference to yfinance |
+| `REGIME_DEFAULT_SYMBOL` | `^NSEI` | Default `--symbol` |
+| `REGIME_DEFAULT_INTERVAL` | `1d` | Default `--interval` |
+| `REGIME_WINDOW` | `126` | Default `--window` |
+| `REGIME_ARTIFACTS_DIR` | `./artifacts` | Default `--out-dir` for `plot` and `eval --plot` |
+| `REGIME_EDMD_RANK` | `10` | EDMD truncation rank |
+| `REGIME_HMM_N_STATES` | `3` | HMM state count |
+| `REGIME_TRANSITION_THRESHOLD` | `0.6` | Transition-risk flag threshold |
+| `REGIME_CALIBRATION_ENABLED` | `true` | Apply calibration artifact when present |
+| `REGIME_CALIBRATION_ARTIFACT` | `./artifacts/calibration.json` | Calibration artifact path |
+| `REGIME_PROVENANCE_ENABLED` | `false` | Append an inference record per detection |
+| `MARKETLAKE_DATA_DIR` | — | Use MarketLake instead of yfinance when set and importable |
 
-See [`config.py`](../src/regime_radar/config.py) for the full list.
+Full list: [`config.py`](../src/regime_radar/config.py).
 
 ## JSON output
-
-Pass `--json` to `regime detect` for machine-readable output:
 
 ```bash
 uv run regime detect --symbol ^NSEI --json
 ```
 
-The structure mirrors the `RegimeResult` and `TransitionRisk` Pydantic models — see [`models.py`](../src/regime_radar/models.py).
+Structure follows the `RegimeResult` and `TransitionRisk` models in [`models.py`](../src/regime_radar/models.py).
 
 ## Troubleshooting
 
-**Yahoo rate-limit errors on scan.** Use `--delay-ms 500` for any watchlist over ~20 names. For persistent issues, wait 30–60 seconds and retry.
-
-**Insufficient data on intraday intervals.** Yahoo's intraday history is limited (~60 days for `5m`, ~730 days for `1h`). Reduce `--lookback` if you see "insufficient data" warnings.
-
-**HMM convergence warnings on `regime eval`.** Non-fatal. Arises from hmmlearn's EM on synthetic noise. The detector handles this internally by falling back to diagonal then spherical covariance.
-
-**Unknown watchlist name.** Run `regime scan --list` to see the full registry.
+| Issue | Resolution |
+|---|---|
+| Yahoo rate-limit errors | Use `--delay-ms 500`; retry after 30–60 s |
+| Insufficient intraday data | Yahoo limits history (~60 days for `5m`, ~730 days for `1h`); reduce `--lookback` |
+| HMM convergence warnings in `eval` | Non-fatal; covariance falls back to diagonal, then spherical |
+| Unknown watchlist | `regime scan --list` |

@@ -1,40 +1,44 @@
 # Architecture
 
-## Goals
+## Design principles
 
-1. **Explainable** — every regime label must be auditable. The user can ask "why?" and get a list of factors with their contributions.
-2. **Independent voters** — ensemble three methods whose statistical assumptions are orthogonal, so their errors are uncorrelated and aggregate accuracy beats any single method.
-3. **Pure math core** — the `core/` package has no I/O, no globals, no side effects. Inject a numpy array, get back a Pydantic result. This makes the math fully testable on synthetic data with known ground truth.
-4. **Honest measurement** — ship the evaluation harness so accuracy claims are reproducible. The 70% headline is enforced as a regression test, not a marketing number.
-5. **Point-in-time by construction** — detection cannot see the future and every result is reproducible. This is structural, not a convention to remember (see below).
+1. **Explainability** — every regime label is auditable and carries the factors that produced it, with their contributions.
+2. **Independent voters** — the ensemble combines three methods with orthogonal statistical assumptions, so their errors are weakly correlated.
+3. **Pure math core** — `core/` has no I/O, globals, or side effects. Input: a numpy array. Output: a Pydantic model. All math is testable on synthetic data with known ground truth.
+4. **Reproducible evaluation** — the evaluation harness ships with the package. The 70% accuracy floor is enforced as a regression test.
+5. **Point-in-time by construction** — detection cannot access future data, and every result is reproducible. Enforced structurally (R0).
 
-## Point-in-time contract & reproducibility (R0)
+## Point-in-time contract and reproducibility (R0)
 
-Every detection consumes a `PointInTimeFrame` (`core/contract.py`). The frame wraps a price series plus an `as_of` instant and **truncates to that instant at construction** — there is no method that returns a bar dated after `as_of`. `detect_regime` accepts a frame directly, or builds one internally from a raw `close` array, so both call paths get the same guarantee. The walk-forward harness wraps each window in a frame whose `as_of` is the window's last bar, turning "no look-ahead" from a hope into an enforced invariant: appending future bars to a series leaves a past-dated decision byte-identical (this is a test, `test_future_bars_do_not_leak`).
+Every detection consumes a `PointInTimeFrame` (`core/contract.py`). The frame wraps a price series and an `as_of` instant and truncates to `as_of` at construction; no method returns a bar dated after it. `detect_regime` accepts a frame directly or builds one from a raw `close` array.
 
-Reproducibility rides on three fields stamped onto every `RegimeResult`:
+The walk-forward harness wraps each window in a frame with `as_of` set to the window's last bar. Appending future bars leaves a past-dated result byte-identical (`test_future_bars_do_not_leak`).
 
-- `model_version` — the detection-logic semver from `version.py` (`MODEL_VERSION`), bumped on any change that can alter outputs. Distinct from the package version.
-- `code_version` — git SHA (with a `+dirty` marker) or, failing that, the package version.
-- `input_hash` — a stable 16-char SHA-256 of the visible inputs; identical inputs always produce an identical hash.
+Fields stamped on every `RegimeResult`:
 
-When `provenance_enabled` is set, each detection also appends an immutable `InferenceRecord` (one JSON line) under `provenance_dir`. Records are stdlib-only and append-only, and writing is wrapped so provenance can never break a detection.
+| Field | Content |
+|---|---|
+| `model_version` | Detection-logic semver (`MODEL_VERSION` in `version.py`); bumped on any change that can alter output. Independent of the package version. |
+| `code_version` | Git SHA (with `+dirty` marker), or package version as fallback |
+| `input_hash` | 16-char SHA-256 of visible inputs; deterministic |
 
-The contract reserves a `with_exogenous` hook (currently a documented `NotImplementedError`) for macro / cross-asset features that will carry their own `known_at` publication lag — so those features can be added later without a breaking change.
+With `provenance_enabled`, each detection appends an immutable `InferenceRecord` (one JSON line) to `provenance_dir`. Writing is stdlib-only, append-only, and isolated so it cannot fail a detection.
 
-## Calibration & uncertainty (R1)
+`with_exogenous` is reserved (currently raises `NotImplementedError`) for macro and cross-asset features with `known_at` publication-lag semantics.
 
-A point label with a raw probability is not enough to act on safely. R1 adds three things, all driven by a single fitted artifact (`calibration/artifact.py`, plain JSON), produced by `regime calibrate`:
+## Calibration and uncertainty (R1)
 
-1. **Calibrated confidence** — temperature scaling (`calibration/calibrator.py`) corrects the sharpness of the soft-vote distribution with one learned scalar, fit to minimise NLL on a harvested calibration set. Because `softmax(log p / T)` preserves the per-row argmax, **calibration never changes the label** — it only makes `confidence` honest. This is why R1 cannot regress accuracy.
-2. **Conformal prediction sets** — split conformal (`calibration/conformal.py`) with nonconformity `1 - p(true)` yields a label set with a distribution-free coverage guarantee at the target `1 - alpha`. The set surfaces plausible alternatives and is never empty (the argmax is always retained).
-3. **Out-of-distribution score** — a Mahalanobis distance in a small feature space derived entirely from the `RegimeResult` (`calibration/ood.py`), mapped through the chi-square CDF to [0, 1]. High means the current market state is unlike the fit data, so the label should be trusted less.
+Driven by a single JSON artifact (`calibration/artifact.py`) produced by `regime calibrate`:
 
-`detect_regime` applies the artifact when one is present and `calibration_enabled` is set; with `calibrate=False` (used while *fitting* the calibrator, and for A/B tests) it returns raw output. When no artifact exists, behaviour is identical to the uncalibrated detector — calibration is purely additive.
+1. **Calibrated confidence** — temperature scaling (`calibration/calibrator.py`): one scalar fitted to minimise NLL on a harvested calibration set. `softmax(log p / T)` preserves the argmax, so the label is never changed and accuracy cannot regress.
+2. **Conformal prediction sets** — split conformal (`calibration/conformal.py`) with nonconformity `1 − p(true)`. Distribution-free coverage at `1 − alpha`. Never empty; the argmax is always included.
+3. **Out-of-distribution score** — Mahalanobis distance over features derived from the `RegimeResult` (`calibration/ood.py`), mapped through the chi-square CDF to `[0, 1]`. Higher values indicate a market state unlike the fit data.
 
-The artifact records its `fit_source`. Today that is `"synthetic"`: the calibrator is fit on the synthetic battery because real NSE data is not yet wired in, and the artifact says so explicitly. Re-fitting on real data later is a single `regime calibrate` run.
+`detect_regime` applies the artifact when present and `calibration_enabled` is set. `calibrate=False` returns raw output (used during calibrator fitting and A/B tests). Without an artifact, output is identical to the uncalibrated detector.
 
-R1 also gates the hand-tuned HMM-confidence dampening ladder in `regime.py` behind `raw_hmm_dampening` (default on). Calibration now sits on top of it; the R2 evaluation work will A/B the ladder off against calibration to decide whether to retire it.
+The artifact records `fit_source`, currently `"synthetic"`. Re-fitting on real data requires one `regime calibrate` run.
+
+The HMM confidence-dampening ladder is gated behind `raw_hmm_dampening` (default on). The R2 A/B found no label change on synthetic data; the ladder is retained pending real-data evaluation.
 
 ## Dependency graph
 
@@ -65,60 +69,65 @@ R1 also gates the hand-tuned HMM-confidence dampening ladder in `regime.py` behi
        cli/      eval/    viz/
 ```
 
-`core/` has zero external coupling beyond numpy/scipy/hmmlearn (the R0 additions use only stdlib `hashlib`/`json`; the R1 calibration layer uses scipy, already a dependency). `cli/`, `eval/`, and `viz/` all depend on `core/` and `models.py` but never on each other. `core/regime.py` consumes the `calibration/` leaf modules to apply an artifact, but the fit path (`calibration/fit.py`) lives outside the hot path and is only invoked by `regime calibrate`, so there is no import cycle.
+- `core/` depends only on numpy, scipy, and hmmlearn. R0 additions use stdlib `hashlib` and `json`; R1 uses scipy.
+- `cli/`, `eval/`, and `viz/` depend on `core/` and `models.py`, not on each other.
+- `core/regime.py` imports the `calibration/` leaf modules to apply an artifact. The fit path (`calibration/fit.py`) is invoked only by `regime calibrate`, so no import cycle exists.
 
-## The ensemble
-
-Three voters, each operating on different statistical assumptions:
+## Ensemble
 
 ### 1. EDMD (Extended Dynamic Mode Decomposition)
-- **What it sees**: linear-operator approximation of market dynamics in a lifted observable space.
-- **Strength**: captures persistent modes (trending) and decay modes (mean reversion) in one framework.
-- **Weakness**: the eigenstructure is sensitive to which observables are chosen and to the window length. Spectrum can be unstable on short windows.
-- **Vote**: maps `|λ₁|`, `arg(λ₁)`, and spectral gap to a regime label via documented thresholds.
+
+- **Input**: linear-operator approximation of market dynamics in a lifted observable space.
+- **Strength**: captures persistent (trending) and decaying (mean-reverting) modes in one framework.
+- **Limitation**: eigenstructure is sensitive to observable choice and window length; spectrum can be unstable on short windows.
+- **Vote**: maps `|λ₁|`, `arg(λ₁)`, and spectral gap to a label via fixed thresholds.
 
 ### 2. Gaussian HMM
-- **What it sees**: latent discrete states governing (return, log-vol) emissions.
-- **Strength**: provides a calibrated posterior probability for each state at each time step.
-- **Weakness**: tends to be over-confident on directional labels in low-info regimes (random walks with apparent local drifts).
-- **Vote**: labels each fitted state by its `(mean return, mean vol)` signature and outputs the Viterbi-decoded current state's label.
 
-### 3. Rule-based vol + trend + reversion
-- **What it sees**: annualised drift, annualised vol, daily Sharpe, lag-5 variance ratio, AR(1) half-life of log-price.
-- **Strength**: fully transparent, fast, no learning. Uses orthogonal statistics — the AR(1) half-life is a price-level test that returns-based methods cannot replicate.
-- **Weakness**: hand-tuned thresholds; can be slightly miscalibrated on highly atypical markets.
-- **Vote**: a decision tree of vol/Sharpe/VR/half-life thresholds with priorities chosen to handle edge cases (e.g., AR(1) half-life override for OU mean reversion).
+- **Input**: latent discrete states governing `(return, log-vol)` emissions.
+- **Strength**: posterior probability per state at each time step.
+- **Limitation**: over-confident on directional labels in low-information regimes.
+- **Vote**: labels each fitted state by its `(mean return, mean vol)` signature; outputs the label of the Viterbi-decoded current state.
+
+### 3. Rule-based classifier
+
+- **Input**: annualised drift, annualised vol, daily Sharpe, lag-5 variance ratio, AR(1) half-life of log-price.
+- **Strength**: transparent, deterministic, no training. The AR(1) half-life is a price-level test not replicable by returns-based methods.
+- **Limitation**: hand-tuned thresholds; may be miscalibrated on atypical markets.
+- **Vote**: decision tree over vol, Sharpe, variance ratio, and half-life thresholds, with priority ordering for edge cases (e.g. half-life override for OU mean reversion).
 
 ### Voting
 
-The default weights are `{edmd: 0.40, hmm: 0.30, rule: 0.30}`. Each voter contributes `weight × confidence` to its chosen label; the remaining `weight × (1 - confidence)` is spread uniformly across other labels (mild smoothing so we never zero out alternatives). The final label is the argmax of the normalised distribution.
+Default weights: `{edmd: 0.40, hmm: 0.30, rule: 0.30}`.
 
-Two confidence-modulation rules tune HMM's over-confidence:
+Each voter assigns `weight × confidence` to its label and distributes `weight × (1 − confidence)` uniformly across the remaining labels. The final label is the argmax of the normalised distribution.
 
-- When the rule classifier identifies strong mean reversion (half-life < 15 bars) and HMM votes directional, HMM's confidence is multiplied by 0.3.
-- When the rule's variance ratio strongly indicates reversion and HMM votes directional, HMM's confidence is multiplied by 0.4.
-- When the rule's Sharpe is near zero and HMM votes directional, HMM's confidence is multiplied by 0.6.
+HMM confidence dampening (`raw_hmm_dampening`), applied when HMM votes a directional label:
 
-## The transition-risk model
+| Rule-classifier condition | HMM confidence multiplier |
+|---|---|
+| AR(1) half-life < 15 bars | 0.3 |
+| Variance ratio indicates strong reversion | 0.4 |
+| Sharpe near zero | 0.6 |
 
-A separate path that asks: given the current Koopman spectrum, how different is it from recent baseline spectra?
+## Transition-risk model
 
-Three signals, each mapped through a sigmoid to roughly `[0, 1]`, then weighted-averaged:
+Measures deviation of the current Koopman spectrum from a baseline of recent spectra. Three signals, each mapped through a sigmoid to approximately `[0, 1]`, are combined by weighted average:
 
-1. **Eigenvalue drift**: L2 distance between the current top-k eigenvalues (by magnitude) and the average of `baseline_windows` historical fits.
-2. **Spectral-gap collapse**: drop in `|λ₁| - |λ₂|` versus the baseline mean. A collapsing gap means no clear dominant mode — regime in flux.
-3. **Vol acceleration**: z-score of `(short_vol - long_vol)` versus its 60-bar history. Vol regime shifts often lead structural shifts.
+1. **Eigenvalue drift** — L2 distance between the current top-k eigenvalues (by magnitude) and the mean over `baseline_windows` historical fits.
+2. **Spectral-gap collapse** — reduction in `|λ₁| − |λ₂|` relative to the baseline mean. Indicates loss of a dominant mode.
+3. **Vol acceleration** — z-score of `(short_vol − long_vol)` against its 60-bar history.
 
-Risk above `transition_threshold` (default 0.6) is flagged for the user.
+Scores above `transition_threshold` (default 0.6) are flagged.
 
 ## Data layer
 
-`data.py` exposes one function: `load(symbol, interval, start, end)`. It tries to import MarketLake first; if absent, falls back to yfinance. Downstream code never calls yfinance/Upstox directly — when MarketLake exists, this becomes a thin pass-through.
+`data.py` exposes a single function: `load(symbol, interval, start, end)`. MarketLake is used if importable; otherwise yfinance. No other module calls yfinance or Upstox directly.
 
-The schema is bhavcopy-aligned: `symbol, interval, ts, open, high, low, close, volume`. Times are tz-aware (IST).
+Schema (bhavcopy-aligned): `symbol, interval, ts, open, high, low, close, volume`. Timestamps are tz-aware (IST).
 
-## What this is NOT
+## Out of scope
 
-- Not a backtester. RegimeRadar produces labels and risk scores; backtesting is a separate job.
-- Not a forecaster. "Regime" is a present-tense classification, not a forward prediction. Any forward claim must be backed by a logged evaluation transcript.
-- Not a substitute for risk management. A label is an input to your decision process, not the decision.
+- **Forecasting** — a regime is a present-tense classification. Forward claims require a logged evaluation transcript.
+- **Trading signals** — `regime backtest` is an economic validation of regime timing, not a strategy or signal generator.
+- **Risk management** — labels are decision inputs, not decisions.
