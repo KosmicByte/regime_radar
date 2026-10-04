@@ -1,6 +1,6 @@
 # Methods
 
-The mathematical content, in enough detail that you can audit (or replace) any piece.
+The mathematical content in enough detail
 
 ## Koopman / Dynamic Mode Decomposition
 
