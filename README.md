@@ -1,12 +1,12 @@
 # RegimeRadar
 
-> Explainable market-regime detection via Koopman/DMD, EDMD, and HMM ensembles.
+Explainable market-regime detection using an EDMD (Koopman), HMM, and rule-based ensemble.
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-30%20passed-brightgreen)](#testing)
 
-RegimeRadar classifies the current state of a market — *trending up/down, mean-reverting, high-vol chop, breakout, or low-vol grind* — and produces an auditable explanation for every label. Built for Indian equity markets with native support for indices and F&O-eligible stocks.
+Classifies market state as `TRENDING_UP`, `TRENDING_DOWN`, `MEAN_REVERTING`, `HIGH_VOL_CHOP`, `BREAKOUT`, or `LOW_VOL_GRIND`, with an auditable explanation for each label. Targets Indian equity markets: NSE indices and F&O-eligible stocks.
 
 ## Quickstart
 
@@ -17,31 +17,31 @@ uv sync
 uv run regime detect --symbol ^NSEI
 ```
 
-Full installation, configuration, and worked examples: [`docs/quickstart.md`](docs/quickstart.md).
+Installation, configuration, and examples: [`docs/quickstart.md`](docs/quickstart.md).
 
 ## Documentation
 
-| Document | Purpose |
+| Document | Contents |
 |---|---|
-| [`docs/quickstart.md`](docs/quickstart.md) | Installation, configuration, worked examples |
-| [`docs/cli.md`](docs/cli.md) | CLI reference — every command, flag, and watchlist |
-| [`docs/architecture.md`](docs/architecture.md) | System design, dependency graph, ensemble logic |
-| [`docs/methods.md`](docs/methods.md) | Mathematical foundations — Koopman, EDMD, HMM, VR, AR(1) |
-| [`docs/evaluation.md`](docs/evaluation.md) | Benchmark methodology and accuracy claims |
-| [`docs/features.md`](docs/features.md) | Roadmap and competitive feature analysis |
+| [`docs/quickstart.md`](docs/quickstart.md) | Installation, configuration, examples |
+| [`docs/cli.md`](docs/cli.md) | Commands, flags, watchlists |
+| [`docs/architecture.md`](docs/architecture.md) | System design, dependency graph, ensemble |
+| [`docs/methods.md`](docs/methods.md) | Koopman, EDMD, HMM, variance ratio, AR(1) half-life |
+| [`docs/evaluation.md`](docs/evaluation.md) | Benchmark methodology and results |
+| [`docs/features.md`](docs/features.md) | Roadmap |
 
 ## Accuracy
 
-RegimeRadar achieves **75–78% accuracy** on the synthetic ground-truth battery under walk-forward evaluation with grouped scoring. Reproducible via `regime eval` and enforced as a CI floor at 70%. A real-markets accuracy figure is deliberately not published — see [`docs/evaluation.md`](docs/evaluation.md) for the framing.
+75–78% on the synthetic ground-truth battery under walk-forward evaluation with grouped scoring. Reproducible via `regime eval`; enforced in CI with a 70% floor. No real-market accuracy figure is published — see [`docs/evaluation.md`](docs/evaluation.md).
 
 ## Testing
 
 ```bash
-uv run pytest                      # unit tests (~3 seconds)
-uv run pytest -m slow              # add synthetic benchmark suite (~80 seconds)
+uv run pytest            # unit tests (~3 s)
+uv run pytest -m slow    # includes synthetic benchmark (~80 s)
 ```
 
-Current status: **30/30 tests passing** — 14 math-layer, 14 ensemble on synthetic regimes, 2 benchmark gates.
+30 tests: 14 math layer, 14 ensemble on synthetic regimes, 2 benchmark gates.
 
 ## License
 
