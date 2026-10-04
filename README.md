@@ -1,14 +1,16 @@
 # RegimeRadar
 
-> Explainable market-regime detection via Koopman/DMD, EDMD, and HMM ensembles.
+Explainable market-regime detection using an EDMD (Koopman), HMM, and rule-based ensemble.
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-69%20passed-brightgreen)](#testing)
 
-RegimeRadar classifies the current state of a market — *trending up/down, mean-reverting, high-vol chop, breakout, or low-vol grind* — and produces an auditable explanation for every label. Built for Indian equity markets with native support for indices and F&O-eligible stocks.
+Classifies market state as `TRENDING_UP`, `TRENDING_DOWN`, `MEAN_REVERTING`, `HIGH_VOL_CHOP`, `BREAKOUT`, or `LOW_VOL_GRIND`, with an auditable explanation for each label. Targets Indian equity markets: NSE indices and F&O-eligible stocks.
 
-Every detection runs through a **point-in-time contract** that makes look-ahead bias structurally impossible, is stamped with a model version, code version, and input hash so any past result is reproducible and auditable, and — once a calibration artifact is fit — reports **calibrated confidence**, a **conformal prediction set**, and an **out-of-distribution score** so you know when to trust the label and when the market looks unlike anything the detector has seen.
+- **Point-in-time contract** — look-ahead bias is structurally excluded.
+- **Reproducibility** — every result is stamped with model version, code version, and input hash.
+- **Uncertainty** — with a calibration artifact: calibrated confidence, conformal prediction set, and out-of-distribution score.
 
 ## Quickstart
 
@@ -19,58 +21,81 @@ uv sync
 uv run regime detect --symbol ^NSEI
 ```
 
-Full installation, configuration, and worked examples: [`docs/quickstart.md`](docs/quickstart.md).
+Installation, configuration, and examples: [`docs/quickstart.md`](docs/quickstart.md).
 
 ## Documentation
 
-| Document | Purpose |
+| Document | Contents |
 |---|---|
-| [`docs/quickstart.md`](docs/quickstart.md) | Installation, configuration, worked examples |
-| [`docs/cli.md`](docs/cli.md) | CLI reference — every command, flag, and watchlist |
-| [`docs/architecture.md`](docs/architecture.md) | System design, dependency graph, ensemble logic |
-| [`docs/methods.md`](docs/methods.md) | Mathematical foundations — Koopman, EDMD, HMM, VR, AR(1) |
-| [`docs/evaluation.md`](docs/evaluation.md) | Benchmark methodology and accuracy claims |
-| [`docs/features.md`](docs/features.md) | Roadmap and competitive feature analysis |
-| [`CHANGELOG.md`](CHANGELOG.md) | Versioned change history, keyed to the detection-logic `MODEL_VERSION` |
+| [`docs/quickstart.md`](docs/quickstart.md) | Installation, configuration, examples |
+| [`docs/cli.md`](docs/cli.md) | Commands, flags, watchlists |
+| [`docs/architecture.md`](docs/architecture.md) | System design, point-in-time contract, calibration, ensemble |
+| [`docs/methods.md`](docs/methods.md) | Koopman, EDMD, HMM, variance ratio, AR(1) half-life |
+| [`docs/evaluation.md`](docs/evaluation.md) | Benchmark methodology and results |
+| [`docs/features.md`](docs/features.md) | Roadmap |
+| [`CHANGELOG.md`](CHANGELOG.md) | Change history keyed to `MODEL_VERSION` |
 
 ## Accuracy
 
-RegimeRadar achieves **75–78% accuracy** on the synthetic ground-truth battery under walk-forward evaluation with grouped scoring. Reproducible via `regime eval` and enforced as a CI floor at 70%. A real-markets accuracy figure is deliberately not published — see [`docs/evaluation.md`](docs/evaluation.md) for the framing.
+75–78% on the synthetic ground-truth battery under walk-forward evaluation with grouped scoring. Reproducible via `regime eval`; enforced in CI with a 70% floor. No real-market accuracy figure is published — see [`docs/evaluation.md`](docs/evaluation.md).
 
-## Reproducibility & point-in-time integrity
+## Point-in-time integrity and reproducibility
 
-Detection consumes a `PointInTimeFrame` — a contract that truncates every input to an `as_of` instant and exposes no API to see beyond it. Appending future bars to a series cannot change a past-dated decision, so backtests and the walk-forward harness are honest by construction.
+Detection consumes a `PointInTimeFrame`, which truncates all inputs to an `as_of` instant and exposes no data beyond it. Appending future bars does not change a past-dated result.
 
-Each `RegimeResult` carries `model_version` (the detection-logic semver, bumped whenever outputs can change), `code_version` (git SHA or package version), and `input_hash` (a stable hash of the inputs). With `REGIME_PROVENANCE_ENABLED=true`, every detection also appends an immutable JSONL inference record under `artifacts/provenance/`, turning "why did the regime flip on that date?" into a lookup rather than a guess.
+| `RegimeResult` field | Content |
+|---|---|
+| `model_version` | Detection-logic semver; bumped when outputs can change |
+| `code_version` | Git SHA or package version |
+| `input_hash` | Deterministic hash of inputs |
 
-## Calibrated confidence & uncertainty
+With `REGIME_PROVENANCE_ENABLED=true`, each detection appends an immutable JSONL inference record to `artifacts/provenance/`.
 
-Run `regime calibrate` once to fit a calibration artifact. After that, every detection reports:
+## Calibration and uncertainty
 
-- **Calibrated confidence** — temperature-scaled so "70%" means right ~70% of the time. Because temperature scaling preserves the argmax, calibration never changes the label, only its honesty.
-- **A conformal prediction set** — a set of labels guaranteed to cover the true regime at the target rate (default 90%), so you see the plausible alternatives, not just the point pick.
-- **An out-of-distribution score** — a 0–1 novelty signal; when it's high, the current market looks unlike the fit data and the label should be trusted less.
+`regime calibrate` fits a calibration artifact. Detections then report:
 
-The calibrator is currently fit on the synthetic battery and is marked as such; re-running `regime calibrate` on real data later refreshes it with no code change. See [`docs/cli.md`](docs/cli.md#regime-calibrate).
+| Output | Description |
+|---|---|
+| Calibrated confidence | Temperature-scaled probability. Preserves the argmax; labels are unchanged. |
+| Conformal prediction set | Label set covering the true regime at the target rate (default 90%). |
+| Out-of-distribution score | `[0, 1]`; high values indicate a market state unlike the fit data. |
 
-## Does trading the regime have an edge?
+The current artifact is fit on the synthetic battery and marked as such. Re-running `regime calibrate` on real data refreshes it without code changes. See [`docs/cli.md`](docs/cli.md#regime-calibrate).
 
-Accuracy is not the same as profitability. `regime backtest` answers the economic question directly: it walks the detector over a symbol's real history (point-in-time, no look-ahead), realises a transparent regime→position strategy with transaction costs, and tests it against a **shuffled-regime null**.
+## Economic validation
+
+`regime backtest` tests whether a symbol's regime sequence has tradeable timing. It walks the detector over history (point-in-time), applies a fixed regime→position map with transaction costs, and compares against a shuffled-regime null.
 
 ```bash
 uv run regime backtest --symbol GAIL.NS
 ```
 
-The verdict is a permutation p-value: the fraction of randomly time-shifted versions of the same position sequence that match or beat the real strategy's Sharpe. A low p-value means the regime has genuine *timing* skill, not just a lucky position mix. The report also includes Sharpe vs buy-and-hold, max drawdown, and label stability (whipsaw rate). This is decision evidence — not a signal, not a recommendation, not financial advice. See [`docs/cli.md`](docs/cli.md#regime-backtest).
+| Output | Description |
+|---|---|
+| Permutation p-value | Fraction of circularly shifted position sequences with Sharpe ≥ the real strategy. Low values indicate timing skill beyond position mix. |
+| Performance | Sharpe vs buy-and-hold, max drawdown |
+| Stability | Whipsaw rate, mean dwell |
+
+Output is validation evidence, not a trading signal or recommendation, and not financial advice. See [`docs/cli.md`](docs/cli.md#regime-backtest).
 
 ## Testing
 
 ```bash
-uv run pytest                      # unit tests (~3 seconds)
-uv run pytest -m slow              # add synthetic benchmark suite (~80 seconds)
+uv run pytest            # unit tests (~3 s)
+uv run pytest -m slow    # includes synthetic benchmark (~80 s)
 ```
 
-Current status: **69/69 tests passing** — 14 math-layer, 14 ensemble on synthetic regimes, 14 point-in-time/provenance (R0), 10 calibration/conformal/OOD (R1), 10 economic/stability/uncertainty (R2), 5 benchmark CIs + dampening A/B (R2), 2 benchmark gates.
+| Suite | Tests |
+|---|---|
+| Math layer | 14 |
+| Ensemble on synthetic regimes | 14 |
+| Point-in-time and provenance (R0) | 14 |
+| Calibration, conformal, OOD (R1) | 10 |
+| Economic, stability, uncertainty (R2) | 10 |
+| Benchmark CIs and dampening A/B (R2) | 5 |
+| Benchmark gates | 2 |
+| **Total** | **69** |
 
 ## License
 
